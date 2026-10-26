@@ -1,0 +1,18 @@
+services:
+  zcode2api:
+    build: .
+    container_name: zcode2api
+    restart: unless-stopped
+    ports:
+      - "3010:3010"
+    environment:
+      - PORT=${PORT:-3010}
+      # 注意：当前版本固定绑定 127.0.0.1，容器内端口映射需源码支持 HOST 环境变量后才能对外暴露
+    volumes:
+      - ./data:/app/data
+    networks:
+      - zcode2api_net
+
+networks:
+  zcode2api_net:
+    driver: bridge
