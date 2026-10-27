@@ -2,6 +2,7 @@
 // 语义逐条对齐终版 server.py（2026-10-26，FastAPI:3010）：
 //   - POST /v1/chat/completions：上游一律 stream=true，非流式聚合、流式逐帧翻译；
 //   - GET /v1/models、GET /health；
+//   - GET /admin 内置控制台（internal/handler），数据源 GET /admin/api/overview；
 //   - 可选入口鉴权（Authorization: Bearer 或 x-api-key，api_key 为空则不鉴权）。
 package server
 
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"zcode2api/internal/config"
+	"zcode2api/internal/handler"
 	"zcode2api/internal/zcode"
 )
 
@@ -61,6 +63,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/chat/completions", s.handleChat)
 	mux.HandleFunc("POST /v1/messages", s.handleMessages)
 	mux.HandleFunc("POST /v1/responses", s.handleResponses)
+	mux.HandleFunc("GET /admin", handler.PanelHandler())
+	mux.HandleFunc("GET /admin/api/overview", handler.Overview(s.Cfg, s.Client))
 	return mux
 }
 

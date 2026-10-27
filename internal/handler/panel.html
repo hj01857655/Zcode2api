@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZCode2api-go</title>
+<style>
+:root{--bg:#0f1115;--card:#181b22;--line:#262b36;--tx:#e6e9ef;--dim:#8b93a3;--ok:#4ade80;--bad:#f87171;--warn:#fbbf24;--acc:#6ea8fe}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.6 "Segoe UI",system-ui,sans-serif}
+.wrap{max-width:980px;margin:0 auto;padding:20px 16px 60px}
+h1{font-size:18px;margin:0 0 4px}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:16px;flex-wrap:wrap}
+.tabs button{background:none;border:none;color:var(--dim);padding:8px 14px;cursor:pointer;font-size:14px;border-bottom:2px solid transparent}
+.tabs button.on{color:var(--acc);border-bottom-color:var(--acc)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:14px}
+.card h3{margin:0 0 10px;font-size:14px}
+.kv{display:grid;grid-template-columns:110px 1fr;gap:4px 12px;font-size:13px}
+.kv b{color:var(--dim);font-weight:400}
+button{background:var(--acc);border:none;border-radius:6px;color:#0b1220;padding:7px 14px;cursor:pointer;font-size:13px;font-weight:600}
+button.ghost{background:none;border:1px solid var(--line);color:var(--tx);font-weight:400}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
+th{color:var(--dim);font-weight:400}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}.dim{color:var(--dim)}
+.badge{display:inline-block;border-radius:99px;padding:1px 9px;font-size:11px;font-weight:600}
+.badge.on{background:#14321f;color:var(--ok)}.badge.off{background:#321414;color:var(--bad)}
+.mono{font-family:Consolas,monospace;font-size:12px}
+pre.mono{white-space:pre-wrap;word-break:break-all;margin:0}
+#msg{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1f2430;border:1px solid var(--line);border-radius:8px;padding:10px 18px;font-size:13px;display:none;max-width:80vw}
+input{background:#0d0f13;border:1px solid var(--line);border-radius:6px;color:var(--tx);padding:7px 10px;font-size:13px;width:180px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>ZCode2api-go 控制台</h1>
+<div class="tabs">
+<button class="on" onclick="tab(this,'vMain')">概览</button>
+<button onclick="tab(this,'vDiag')">诊断</button>
+</div>
+<div id="vMain"></div>
+<div id="vDiag" style="display:none"></div>
+</div>
+<div id="msg"></div>
+<script>
+"use strict";
+const $=s=>document.querySelector(s);
+function authHeaders(){const k=localStorage.zc_apikey;if(!k)return{};return{"Authorization":"Bearer "+k}}
+async function api(p){const r=await fetch(p,{headers:authHeaders()});try{return await r.json()}catch(e){return{error:String(e)}}}
+let tt;function toast(t){const m=$("#msg");m.textContent=t;m.style.display="block";clearTimeout(tt);tt=setTimeout(()=>m.style.display="none",3000)}
+function esc(s){const d=document.createElement("div");d.textContent=s==null?"":String(s);return d.innerHTML}
+function tab(btn,id){document.querySelectorAll(".tabs button").forEach(b=>b.classList.remove("on"));btn.classList.add("on");
+  $("#vMain").style.display=id==="vMain"?"":"none";$("#vDiag").style.display=id==="vDiag"?"":"none"}
+
+async function load(){
+  const o=await api("/admin/api/overview");
+  if(!o.credential){$("#vMain").innerHTML='<div class="card bad">overview 加载失败</div>';return}
+  const c=o.credential;
+  let html=`<div class="card"><h3>凭据</h3><div class="kv">
+    <b>状态</b><span class="${c.valid?"ok":"bad"}">${c.valid?"有效":"无效"}${c.notice?" — "+esc(c.notice):""}</span>
+    <b>模式</b><span>${esc(c.mode||"—")}${c.token_chars!=null?` <span class="dim mono">token ${c.token_chars} 字符</span>`:""}</span>
+    <b>本地鉴权</b><span>${o.local_auth?`<span class="badge on">API_KEY 已开启</span> <input id="k" placeholder="API Key" value="${esc(localStorage.zc_apikey||"")}"> <button class="ghost" onclick="localStorage.zc_apikey=document.getElementById('k').value;toast('已保存')">保存</button>`:'<span class="badge off">未开启（仅回环）</span>'}</span>
+  </div></div>`;
+  if(c.mode==="pool"){
+    html+=`<div class="card"><h3>账号池（${c.accounts} 个）</h3><table>
+    <tr><th>label</th><th>品牌</th><th>token</th><th>保存时间</th><th>冷却</th></tr>
+    ${(c.account_list||[]).map(a=>`<tr><td class="mono">${esc(a.label)}</td><td>${esc(a.provider||"—")}</td>
+    <td class="dim mono">${a.token_chars} 字符</td><td class="dim mono">${esc(a.saved_at||"—")}</td>
+    <td>${a.cooldown_s?`<span class="warn">${a.cooldown_s}s</span>`:'<span class="ok">—</span>'}</td></tr>`).join("")}
+    </table></div>`;
+  }
+  html+=`<div class="card"><h3>模型</h3><table><tr><th>id</th><th>备注</th></tr>
+  ${(o.models||[]).map(m=>`<tr><td class="mono">${esc(m.id)}</td><td>${m.default?'<span class="badge on">default</span>':'<span class="dim">—</span>'}</td></tr>`).join("")}
+  </table></div>`;
+  $("#vMain").innerHTML=html;
+}
+async function loadDiag(){
+  const [h,hres]=await Promise.all([api("/health"),fetch("/health",{headers:authHeaders()})]);
+  $("#vDiag").innerHTML=`
+  <div class="card"><h3>健康检查 <span class="dim">GET /health → ${hres.status}</span></h3>
+  <pre class="mono">${esc(JSON.stringify(h,null,2))}</pre></div>
+  <div class="card"><h3>运维提示</h3><div class="kv">
+    <b>token 来源</b><span>env <span class="mono">ZCODE_TOKEN</span> &gt; 本目录 <span class="mono">token.json</span> &gt; <span class="mono">~/.zcode/v2/config.json</span> 的 start-plan apiKey</span>
+    <b>401 处理</b><span>运行 <span class="mono">./zcode2api-go.exe login</span> 重新授权；CLI/GUI 重登后网关会自动重读，无需重启</span>
+    <b>502（3012）</b><span>system 白名单前缀失效，ZCode 客户端大版本更新后需重新抓包提取 <span class="mono">prefix.json</span></span>
+    <b>429</b><span>上游限流/额度耗尽；账号池模式下失败账号会自动冷却换号</span>
+  </div></div>`;
+}
+load();
+loadDiag();
+</script>
+</body>
+</html>

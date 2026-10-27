@@ -1,5 +1,7 @@
 # ZCode2api-go
 
+![Go](https://img.shields.io/badge/Go-1.22-00ADD8?logo=go&logoColor=white) ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey) ![Type](https://img.shields.io/badge/type-API%20Gateway-blue)
+
 ZCode Start Plan 额度 → OpenAI / Anthropic 兼容网关。Go 标准库实现，零第三方依赖。
 
 支持三种入站协议（OpenAI Chat Completions、OpenAI Responses、Anthropic Messages），
@@ -28,6 +30,7 @@ token 解析顺序：
 | `POST /v1/messages` | Anthropic Messages | 原生 `message` / 原生 SSE（流式透传） |
 | `GET /v1/models` | — | `GLM-5.3-Flash` / `GLM-5.3` / `GLM-4.7` |
 | `GET /health` | — | `{ok, token_chars, upstream, version}` |
+| `GET /admin` | — | Web 控制台（内置，开箱即用）：凭据/账号池状态、模型列表、诊断 |
 
 ### 字段映射
 
@@ -121,6 +124,9 @@ internal/server/
   server.go                   路由、鉴权、chat/completions、错误映射
   responses.go                /v1/responses（转换 + response.* 事件）
   anthropic.go                /v1/messages（前缀注入 + 聚合/透传）
+internal/handler/
+  panel.go                    /admin 内置控制台（embed panel.html）
+  admin.go                    /admin/api/overview（凭据状态、模型、鉴权开关）
 docs/                         PROTOCOL.md / OAUTH.md / PAID.md
 ```
 
@@ -131,4 +137,5 @@ docker compose up -d          # 需先配置 .env（见 .env.example）
 ```
 
 镜像发布至 GHCR（跟随 `v*` 标签，linux/amd64 + linux/arm64）。
-二进制发版：推送 `v*` 标签后 Actions 构建 linux / windows / darwin 的 amd64 + arm64 六平台产物。
+二进制发版：推送 `v*` 标签、发布 Release 或手动触发 workflow_dispatch 后，
+Actions 构建 linux / windows / darwin 的 amd64 + arm64 六平台 tar.gz 产物。
