@@ -65,6 +65,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/responses", s.handleResponses)
 	mux.HandleFunc("GET /admin", handler.PanelHandler())
 	mux.HandleFunc("GET /admin/api/overview", handler.Overview(s.Cfg, s.Client))
+	mux.HandleFunc("POST /admin/api/claim", handler.ClaimHandler(s.Cfg, s.Client, nil))
 	return mux
 }
 

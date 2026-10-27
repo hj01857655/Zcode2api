@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"zcode2api/internal/config"
+	"zcode2api/internal/handler"
 	"zcode2api/internal/server"
 	"zcode2api/internal/zcode"
 )
@@ -88,6 +89,23 @@ func serve() {
 		}
 	}
 	srv := server.New(cfg, client)
+
+	// 自动领套餐（社区叫签到，实际是限时 billing/claim）：启动时跑一次 +
+	// 每 24h 一轮。幂等——已领过（1003）与无可领套餐都只是记一行日志。
+	// ZCODE_AUTO_CLAIM=0 关闭。
+	if os.Getenv("ZCODE_AUTO_CLAIM") != "0" {
+		go func() {
+			run := func(when string) {
+				for _, res := range handler.ClaimAll(cfg, client, false) {
+					log.Printf("自动领套餐[%s] %s: %s", when, res.Account, res.Message)
+				}
+			}
+			run("启动")
+			for range time.Tick(24 * time.Hour) {
+				run("定时")
+			}
+		}()
+	}
 
 	addr := "127.0.0.1:" + strconv.Itoa(cfg.Port)
 	log.Printf("ZCode2api-go 监听 http://%s （upstream=%s）", addr, cfg.Upstream)

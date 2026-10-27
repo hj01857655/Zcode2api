@@ -72,7 +72,16 @@ async function load(){
   html+=`<div class="card"><h3>模型</h3><table><tr><th>id</th><th>备注</th></tr>
   ${(o.models||[]).map(m=>`<tr><td class="mono">${esc(m.id)}</td><td>${m.default?'<span class="badge on">default</span>':'<span class="dim">—</span>'}</td></tr>`).join("")}
   </table></div>`;
+  html+=`<div class="card"><h3>限时套餐领取 <span class="dim">（每日自动跑一次；幂等，已领过无害）</span></h3>
+  <div class="row"><button class="ghost" onclick="doClaim(this,1)">只看可领</button>
+  <button onclick="doClaim(this,0)">立即领取</button><span id="claimOut" class="dim"></span></div></div>`;
   $("#vMain").innerHTML=html;
+}
+async function doClaim(btn,preview){
+  btn.disabled=true;$("#claimOut").textContent=preview?"查询中…":"领取中…";
+  const r=await api("/admin/api/claim"+(preview?"?preview=1":""),{method:"POST"});
+  $("#claimOut").innerHTML=(r.results||[]).map(x=>`<span class="${x.ok?"ok":"warn"}">${esc(x.account)}: ${esc(x.message)}</span>`).join(" ");
+  btn.disabled=false;
 }
 async function loadDiag(){
   const [h,hres]=await Promise.all([api("/health"),fetch("/health",{headers:authHeaders()})]);

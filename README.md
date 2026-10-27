@@ -127,8 +127,19 @@ internal/server/
 internal/handler/
   panel.go                    /admin 内置控制台（embed panel.html）
   admin.go                    /admin/api/overview（凭据状态、模型、鉴权开关）
+  claim.go                    /admin/api/claim（限时套餐领取）
+internal/zcode/
+  claim.go                    套餐领取协议（preview/claim/激活上报/device_mid）
 docs/                         PROTOCOL.md / OAUTH.md / PAID.md
 ```
+
+## 限时套餐领取（自动签到）
+
+社区口径的「ZCode 签到」实际是限时套餐领取：`GET /api/v1/zcode-plan/billing/preview` 列当前可领套餐 → `POST /api/v1/zcode-plan/billing/claim` 按 priority 领取（协议来自社区青龙脚本 L0NE-6/ZCode-Daily 的抓包结论，已用真实 JWT 实测验证）。网关集成：
+
+- **自动领取**：启动时跑一次 + 每 24h 一轮，对账号池每个账号：补报激活事件（app_launch/app_daily_active，领取资格前置）→ preview → 领优先级最高的套餐。幂等——已领过（1003）与无可领套餐都只记日志。`ZCODE_AUTO_CLAIM=0` 关闭
+- **手动触发**：`POST /admin/api/claim`（`?preview=1` 只列不领），或面板概览页「限时套餐领取」按钮
+- **device_mid**：每账号固定 UUID 落盘 `zcode_devices.json`（与 token.json 同目录），换 mid 会触发 3001
 
 ## 部署
 
