@@ -16,3 +16,4 @@ credentials.json
 .env.*
 
 tools/node_modules/
+exp/

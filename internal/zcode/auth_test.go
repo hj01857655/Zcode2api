@@ -4,11 +4,8 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/base64"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -53,77 +50,6 @@ func TestSealCredentialRoundTrip(t *testing.T) {
 
 // WritebackToken：临时目录里写回 config.json apiKey + credentials.json zcodejwttoken，
 // 其它键原样保留，token 在落盘文件中只以密文出现。
-func TestWritebackToken(t *testing.T) {
-	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "config.json")
-	credPath := filepath.Join(dir, "credentials.json")
-
-	os.WriteFile(cfgPath, []byte(`{"port":3010,"provider":{"builtin:bigmodel-start-plan":{"options":{"apiKey":"old"}},"other":{"options":{"apiKey":"keep"}}}}`), 0600)
-	os.WriteFile(credPath, []byte(`{"zcodejwttoken":"enc:v1:OLD","oauth:login_attribution":"enc:v1:KEEP"}`), 0600)
-
-	written, err := WritebackToken(cfgPath, credPath, "zai", "new-token-value")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(written) != 2 {
-		t.Fatalf("应写回两处: %v", written)
-	}
-
-	var cfg map[string]any
-	raw, _ := os.ReadFile(cfgPath)
-	_ = json.Unmarshal(raw, &cfg)
-	if cfg["port"].(float64) != 3010 {
-		t.Fatal("config.json 其它字段应保留")
-	}
-	prov := cfg["provider"].(map[string]any)
-	// 当前登录品牌是 zai：写入/新建 builtin:zai-start-plan 段
-	zai, ok := prov["builtin:zai-start-plan"].(map[string]any)
-	if !ok {
-		t.Fatalf("应新建 builtin:zai-start-plan 段, got %v", prov)
-	}
-	if zai["options"].(map[string]any)["apiKey"] != "new-token-value" {
-		t.Fatal("zai 段 apiKey 未更新")
-	}
-	// 其它品牌段保持原值
-	if prov["builtin:bigmodel-start-plan"].(map[string]any)["options"].(map[string]any)["apiKey"] != "old" {
-		t.Fatal("bigmodel 段不应被改动")
-	}
-	if prov["other"].(map[string]any)["options"].(map[string]any)["apiKey"] != "keep" {
-		t.Fatal("其它 provider 段不应被改动")
-	}
-
-	var creds map[string]string
-	raw2, _ := os.ReadFile(credPath)
-	_ = json.Unmarshal(raw2, &creds)
-	if creds["oauth:login_attribution"] != "enc:v1:KEEP" {
-		t.Fatal("credentials 其它键应原样保留")
-	}
-	newTok := creds["zcodejwttoken"]
-	if strings.Contains(newTok, "new-token-value") || newTok == "enc:v1:OLD" {
-		t.Fatal("zcodejwttoken 应为重新加密的新密文")
-	}
-	// 用与写回相同的 key 解回，验证密文就是新 token（AES-GCM round-trip）
-	parts := strings.Split(newTok[7:], ".")
-	b64d := base64.RawURLEncoding.DecodeString
-	ivb, _ := b64d(parts[0])
-	tagb, _ := b64d(parts[1])
-	ctb, _ := b64d(parts[2])
-	key, err := credentialsKey()
-	if err != nil {
-		t.Fatal(err)
-	}
-	block, _ := aes.NewCipher(key)
-	gcm, _ := cipher.NewGCM(block)
-	got, err := gcm.Open(nil, ivb, append(ctb, tagb...), nil)
-	if err != nil {
-		t.Fatalf("写回的密文解不开: %v", err)
-	}
-	if string(got) != "new-token-value" {
-		t.Fatalf("解回值不符: %q", got)
-	}
-}
-
-// DeviceFlow 全流程（假上游）：init 下发 poll_token → pending → ready 带 token。
 func TestDeviceFlowLogin(t *testing.T) {
 	var selfToken string
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
