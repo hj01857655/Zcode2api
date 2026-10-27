@@ -52,7 +52,7 @@ func ClaimAll(cfg *config.Config, client *zcode.Client, previewOnly bool) []zcod
 						best = p
 					}
 				}
-				msg = "可领: " + best.Name
+				msg = "可领: " + zcode.DescribePlan(best)
 			}
 			out = append(out, zcode.ClaimResult{Account: label, OK: true, Message: msg})
 			continue

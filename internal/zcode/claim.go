@@ -221,9 +221,33 @@ func PreviewPlans(client *http.Client, jwt, deviceMid string) ([]Plan, error) {
 		if id == "" {
 			continue
 		}
-		plans = append(plans, Plan{PlanID: id, Name: p.Name, Desc: p.Desc, Priority: p.Priority})
+		ent := []string{}
+		for _, e := range p.Entitle {
+			name := e.ShowName
+			if name == "" {
+				name = e.Show2
+			}
+			if name == "" {
+				continue
+			}
+			period := "一次性"
+			if e.Period == "daily" {
+				period = "每日"
+			}
+			ent = append(ent, fmt.Sprintf("%s %v%s（%s）", name, e.Grant, e.Unit, period))
+		}
+		plans = append(plans, Plan{PlanID: id, Name: p.Name, Desc: p.Desc,
+			Priority: p.Priority, Entitle: ent})
 	}
 	return plans, nil
+}
+
+// DescribePlan 套餐文案：名称 + 权益明细（脚本 describe_plan 口径）。
+func DescribePlan(p Plan) string {
+	if len(p.Entitle) == 0 {
+		return p.Name
+	}
+	return p.Name + "：" + strings.Join(p.Entitle, "，")
 }
 
 // ClaimResult 一次领取的结果（面板逐账号展示）。
@@ -260,7 +284,7 @@ func ClaimBestForToken(client *http.Client, jwt, deviceMid string) (string, []Pl
 	}
 	switch {
 	case code == 0:
-		return "领取成功: " + best.Name, plans
+		return "领取成功: " + DescribePlan(best), plans
 	case code == 1003:
 		return "已领取过这一期: " + best.Name, plans
 	default:
