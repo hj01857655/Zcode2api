@@ -141,7 +141,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-// usageWindow 300M 包使用时段：23:00–次日 09:00（官方公告）。
+// usageWindow 300M 包使用时段：北京 23:00–次日 09:00（官方 UTC 15:00–01:00）。
 func usageWindow(now time.Time) map[string]any {
 	inWindow := now.Hour() >= 23 || now.Hour() < 9
 	if inWindow {
