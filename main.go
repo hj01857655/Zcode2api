@@ -90,9 +90,10 @@ func serve() {
 	}
 	srv := server.New(cfg, client)
 
-	// 自动领套餐（社区叫签到，实际是限时 billing/claim）：启动时跑一次 +
-	// 每 24h 一轮。幂等——已领过（1003）与无可领套餐都只是记一行日志。
-	// ZCODE_AUTO_CLAIM=0 关闭。
+	// 自动领套餐（社区叫签到，实际是限时 billing/claim）。
+	// 投放节奏（官方公告）：每天 19:00 起领取，300M，使用时段 23:00–次日 09:00。
+	// 因此按 19:05/20:05/21:05/22:05 各试一次覆盖投放延迟——claim 幂等，
+	// 已领过（1003）与无可领套餐都只记一行日志。ZCODE_AUTO_CLAIM=0 关闭。
 	if os.Getenv("ZCODE_AUTO_CLAIM") != "0" {
 		go func() {
 			run := func(when string) {
@@ -101,8 +102,10 @@ func serve() {
 				}
 			}
 			run("启动")
-			for range time.Tick(24 * time.Hour) {
-				run("定时")
+			for {
+				next := nextClaimSlot(time.Now())
+				time.Sleep(time.Until(next))
+				run("定时 " + next.Format("01-02 15:04"))
 			}
 		}()
 	}
@@ -110,4 +113,22 @@ func serve() {
 	addr := "127.0.0.1:" + strconv.Itoa(cfg.Port)
 	log.Printf("ZCode2api-go 监听 http://%s （upstream=%s）", addr, cfg.Upstream)
 	log.Fatal(http.ListenAndServe(addr, srv.Handler()))
+}
+
+// claimSlots 每天尝试领取的时刻（距 00:00 的分钟数，本地时区=北京时间）。
+// 投放 19:00 起；多试几次覆盖投放延迟。
+var claimSlots = []int{19*60 + 5, 20*60 + 5, 21*60 + 5, 22*60 + 5}
+
+// nextClaimSlot 下一个领取尝试时刻（今天剩余的 slot，否则明天 19:05）。
+func nextClaimSlot(now time.Time) time.Time {
+	for day := 0; day < 2; day++ {
+		base := time.Date(now.Year(), now.Month(), now.Day()+day, 0, 0, 0, 0, now.Location())
+		for _, mins := range claimSlots {
+			t := base.Add(time.Duration(mins) * time.Minute)
+			if t.After(now) {
+				return t
+			}
+		}
+	}
+	return now.Add(24 * time.Hour)
 }
