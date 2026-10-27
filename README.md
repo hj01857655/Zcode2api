@@ -140,6 +140,7 @@ docs/                         PROTOCOL.md / OAUTH.md / PAID.md
 - **自动领取**：启动时跑一次 + 每 24h 一轮，对账号池每个账号：补报激活事件（app_launch/app_daily_active，领取资格前置）→ preview → 领优先级最高的套餐。幂等——已领过（1003）与无可领套餐都只记日志。`ZCODE_AUTO_CLAIM=0` 关闭
 - **手动触发**：`POST /admin/api/claim`（`?preview=1` 只列不领），或面板概览页「限时套餐领取」按钮
 - **device_mid**：每账号固定 UUID 落盘 `zcode_devices.json`（与 token.json 同目录），换 mid 会触发 3001
+- **验证码**：claim 要求阿里云无痕验证码。网关从 `client/configs` 动态取 `{enabled, sceneId, prefix, region}`（对齐 zcode-switch），开启时用 `tools/captcha_solve.js`（node + happy-dom，需随网关部署 tools/ 与 node_modules）预求解后随 claim 头下发；求解是偶发失败的重试型操作，失败会退回 3007 现场再求一轮
 
 ## 部署
 

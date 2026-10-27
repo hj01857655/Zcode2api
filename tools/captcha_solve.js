@@ -23,9 +23,10 @@ const SDK = process.env.CAPTCHA_SDK || (function(){
   const c = [path.join(process.cwd(),"AliyunCaptcha.js"), path.join(process.cwd(),"tools","AliyunCaptcha.js"), ...SDK_CANDIDATES];
   return c.find((p)=>fs.existsSync(p))||c[0];
 })();
-const SCENE = "11xygtvd";
-const PREFIX = "no8xfe";
-const REGION = "cn";
+// 场景号默认取自实包（2026-10），client/configs 会动态下发，Go 侧通过环境变量覆盖
+const SCENE = process.env.SCENE_ID || "11xygtvd";
+const PREFIX = process.env.CAPTCHA_PREFIX || "no8xfe";
+const REGION = process.env.CAPTCHA_REGION || "cn";
 const DEBUG = !!process.env.DEBUG;
 
 const log = (...a) => { if (DEBUG) process.stderr.write("  " + a.join(" ") + "\n"); };
@@ -33,6 +34,10 @@ function out(o) {
   process.stdout.write(JSON.stringify(o) + "\n");
   process.exit(0);
 }
+// 兜底：SDK 动态包在 happy-dom 里偶发未捕获异常会裸崩（stderr 被 20 万字符混淆码淹没），
+// 统一转成单行 JSON，让 Go 侧能解析出真实原因并走重试。
+process.on("uncaughtException", (e) => out({ ok: false, msg: "uncaught: " + ((e && e.message) || String(e)) }));
+process.on("unhandledRejection", (e) => out({ ok: false, msg: "rejection: " + ((e && e.message) || String(e)) }));
 
 
 (async () => {
@@ -188,29 +193,36 @@ function out(o) {
 
   let evalDepth = 0;
   const origAppend = document.head.appendChild.bind(document.head);
-  async function handleAppend(el) {
+  // SDK 依赖包按插入顺序串行 eval：并发 fetch 完成顺序不定，乱序 eval
+  // 曾导致 PoW 静默卡死（无 success/fail 回调，只能等 100s 超时）。
+  let evalQueue = Promise.resolve();
+  async function loadScript(el, url) {
+    log("SCRIPT-SRC " + url);
+    try {
+      const r = await fetch(url, { headers: { Referer: "https://zcode.z.ai/" } });
+      const code = await r.text();
+      log("  fetched " + r.status + " " + code.length + "B");
+      if (r.ok && code.length > 100) {
+        // 缓存动态包，便于离线分析
+        try {
+          const nm = url.split("/").pop().slice(0, 40);
+          fs.writeFileSync(path.join(TMP, "aliyunsdk", "pkg_" + nm), code);
+          log("  cached pkg_" + nm);
+        } catch (e) { /* 缓存失败不影响主流程 */ }
+        evalDepth++;
+        try { win.eval(code); } finally { evalDepth--; }
+        if (typeof el.onload === "function") el.onload();
+        return;
+      }
+    } catch (e) { log("  script err " + e.message); }
+    if (typeof el.onerror === "function") el.onerror(new Error("load fail"));
+  }
+  function handleAppend(el) {
     if (el && el.tagName === "SCRIPT" && el.__src) {
       const url = el.__src;
-      log("SCRIPT-SRC " + url);
-      try {
-        const r = await fetch(url, { headers: { Referer: "https://zcode.z.ai/" } });
-        const code = await r.text();
-        log("  fetched " + r.status + " " + code.length + "B");
-        if (r.ok && code.length > 100) {
-          // 缓存动态包，便于离线分析
-          try {
-            const nm = url.split("/").pop().slice(0, 40);
-            fs.writeFileSync(path.join(TMP, "aliyunsdk", "pkg_" + nm), code);
-            log("  cached pkg_" + nm);
-          } catch (e) { /* 缓存失败不影响主流程 */ }
-          evalDepth++;
-          try { win.eval(code); } finally { evalDepth--; }
-          if (typeof el.onload === "function") el.onload();
-          return;
-        }
-      } catch (e) { log("  script err " + e.message); }
-      if (typeof el.onerror === "function") el.onerror(new Error("load fail"));
-      return;
+      const run = evalQueue.then(() => loadScript(el, url));
+      evalQueue = run.catch(() => {});
+      return run;
     }
     if (evalDepth > 0) return;   // 动态包内部再插 script，忽略防递归
     return origAppend(el);

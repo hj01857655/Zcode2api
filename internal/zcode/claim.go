@@ -20,14 +20,16 @@ import (
 )
 
 // 领取协议端点（国内版/国际版同域名同路径，仅 JWT 签发方不同）。
+// ClaimOrigin 用 var 以便测试替换。
 const (
-	ClaimOrigin   = "https://zcode.z.ai"
 	ClaimPreview  = "/api/v1/zcode-plan/billing/preview"
 	ClaimPath     = "/api/v1/zcode-plan/billing/claim"
 	EventReport   = "/api/v1/event/report"
 	ClaimAppVer   = "3.14.0"
 	ClaimPlatform = "win32-x64"
 )
+
+var ClaimOrigin = "https://zcode.z.ai"
 
 // claimErrText 上游错误码的中文说明（脚本 FAILURE_LABELS 口径）。
 var claimErrText = map[int]string{
@@ -109,8 +111,9 @@ func claimHeaders(jwt, deviceMid string) http.Header {
 	return h
 }
 
-// claimPost 领取协议的 POST 帮手；captchaParam 非空时带阿里云验证码头。
-func claimPost(client *http.Client, path string, jwt, deviceMid string, body any, captchaParam string) (map[string]any, error) {
+// claimPost 领取协议的 POST 帮手；captchaParam 非空时带阿里云验证码头，
+// captchaRegion 为空回落 cn。
+func claimPost(client *http.Client, path string, jwt, deviceMid string, body any, captchaParam, captchaRegion string) (map[string]any, error) {
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -122,7 +125,10 @@ func claimPost(client *http.Client, path string, jwt, deviceMid string, body any
 	req.Header = claimHeaders(jwt, deviceMid)
 	if captchaParam != "" {
 		req.Header.Set("X-Aliyun-Captcha-Verify-Param", captchaParam)
-		req.Header.Set("X-Aliyun-Captcha-Verify-Region", "cn")
+		if captchaRegion == "" {
+			captchaRegion = "cn"
+		}
+		req.Header.Set("X-Aliyun-Captcha-Verify-Region", captchaRegion)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -166,7 +172,7 @@ func ReportActivation(client *http.Client, jwt, deviceMid string) error {
 			"source_page":        "",
 			"source_element":     "{}",
 		}
-		payload, err := claimPost(client, EventReport, jwt, deviceMid, body, "")
+		payload, err := claimPost(client, EventReport, jwt, deviceMid, body, "", "")
 		if err != nil {
 			return fmt.Errorf("%s: %w", event, err)
 		}
@@ -175,6 +181,53 @@ func ReportActivation(client *http.Client, jwt, deviceMid string) error {
 		}
 	}
 	return nil
+}
+
+// CaptchaConfig client/configs 下发的阿里云验证码配置（zcode-switch 同口径：
+// claim 开启验证码时必须带 param 才能发起，场景号动态下发防换号失效）。
+type CaptchaConfig struct {
+	Enabled bool
+	SceneID string
+	Region  string
+	Prefix  string
+}
+
+// CaptchaConfigsPath 验证码配置下发端点。
+const CaptchaConfigsPath = "/api/v1/client/configs"
+
+// FetchCaptchaConfig 拉当前账号的验证码配置。
+func FetchCaptchaConfig(client *http.Client, jwt, deviceMid string) (CaptchaConfig, error) {
+	req, err := http.NewRequest(http.MethodGet, ClaimOrigin+CaptchaConfigsPath, nil)
+	if err != nil {
+		return CaptchaConfig{}, err
+	}
+	req.Header = claimHeaders(jwt, deviceMid)
+	resp, err := client.Do(req)
+	if err != nil {
+		return CaptchaConfig{}, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return CaptchaConfig{}, err
+	}
+	var payload struct {
+		Data struct {
+			Configs struct {
+				Captcha struct {
+					Enabled bool   `json:"enabled"`
+					Region  string `json:"region"`
+					Prefix  string `json:"prefix"`
+					SceneID string `json:"sceneId"`
+				} `json:"captcha"`
+			} `json:"configs"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(data, &payload) != nil {
+		return CaptchaConfig{}, fmt.Errorf("configs 响应解析失败: %.80s", string(data))
+	}
+	c := payload.Data.Configs.Captcha
+	return CaptchaConfig{Enabled: c.Enabled, SceneID: c.SceneID, Region: c.Region, Prefix: c.Prefix}, nil
 }
 
 // PreviewPlans 列当前可领套餐。
@@ -278,7 +331,20 @@ func ClaimBestForToken(client *http.Client, jwt, deviceMid string) (string, []Pl
 			best = p
 		}
 	}
-	payload, err := claimPost(client, ClaimPath, jwt, deviceMid, map[string]string{"plan_id": best.PlanID}, "")
+	// 验证码配置动态下发；开启时先求解再发起 claim（param 一次性），避免
+	// 先裸发一轮吃 3007。求解失败不阻断——退回 3007 现场重试的兜底路径。
+	var captcha CaptchaConfig
+	if c, err := FetchCaptchaConfig(client, jwt, deviceMid); err == nil {
+		captcha = c
+	}
+	var param string
+	if captcha.Enabled && captcha.SceneID != "" {
+		if p, serr := SolveCaptcha(captcha.SceneID, captcha.Prefix, captcha.Region); serr == nil {
+			param = p
+		}
+	}
+	body := map[string]string{"plan_id": best.PlanID}
+	payload, err := claimPost(client, ClaimPath, jwt, deviceMid, body, param, captcha.Region)
 	if err != nil {
 		return "claim 请求失败: " + err.Error(), plans
 	}
@@ -286,13 +352,12 @@ func ClaimBestForToken(client *http.Client, jwt, deviceMid string) (string, []Pl
 	if c, ok := payload["code"].(float64); ok {
 		code = int(c)
 	}
-	// 3007 = 验证码未通过：现场求解阿里云 captcha 后带 param 重试一次
-	// （param 一次性，每次 claim 必须重新求）。
+	// 3007 = 验证码未通过：现场重新求解（param 一次性，每次 claim 必须重新求）。
 	if code == 3007 {
-		if param, serr := SolveCaptcha(); serr == nil {
-			if p2, err2 := claimPost(client, ClaimPath, jwt, deviceMid, map[string]string{"plan_id": best.PlanID}, param); err2 == nil {
-				payload, code = p2, 0
-				if cv, ok := p2["code"].(float64); ok {
+		if p2, serr := SolveCaptcha(captcha.SceneID, captcha.Prefix, captcha.Region); serr == nil {
+			if resp2, err2 := claimPost(client, ClaimPath, jwt, deviceMid, body, p2, captcha.Region); err2 == nil {
+				payload, code = resp2, 0
+				if cv, ok := resp2["code"].(float64); ok {
 					code = int(cv)
 				}
 			}

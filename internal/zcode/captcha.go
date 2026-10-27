@@ -16,10 +16,28 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
-// SolveCaptcha 产出阿里云 captchaVerifyParam。
-func SolveCaptcha() (string, error) {
+// SolveCaptcha 产出阿里云 captchaVerifyParam（一次性）。scene/prefix/region
+// 来自 client/configs 动态下发（FetchCaptchaConfig），空值时脚本用内置默认。
+// 偶发失败（网络时序 / PoW 竞态）重试一次，返回最后一次的错误。
+func SolveCaptcha(scene, prefix, region string) (string, error) {
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		if attempt > 0 {
+			time.Sleep(2 * time.Second)
+		}
+		param, err := solveOnce(scene, prefix, region)
+		if err == nil {
+			return param, nil
+		}
+		lastErr = err
+	}
+	return "", lastErr
+}
+
+func solveOnce(scene, prefix, region string) (string, error) {
 	script := os.Getenv("ZCODE_CAPTCHA_SCRIPT")
 	if script == "" {
 		exe, err := os.Executable()
@@ -38,6 +56,15 @@ func SolveCaptcha() (string, error) {
 	cmd := exec.Command(node, script)
 	cmd.Dir = filepath.Dir(script)
 	env := os.Environ()
+	if scene != "" {
+		env = append(env, "SCENE_ID="+scene)
+	}
+	if prefix != "" {
+		env = append(env, "CAPTCHA_PREFIX="+prefix)
+	}
+	if region != "" {
+		env = append(env, "CAPTCHA_REGION="+region)
+	}
 	if sdk := os.Getenv("ZCODE_CAPTCHA_SDK"); sdk != "" {
 		env = append(env, "CAPTCHA_SDK="+sdk)
 	} else if _, err := os.Stat(filepath.Join(cmd.Dir, "AliyunCaptcha.js")); err == nil {
