@@ -114,13 +114,15 @@ func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	body := map[string]any{"usage_window": usageWindow(time.Now()),
+		"next_claim": nextClaimTime(time.Now()).Format("01-02 15:04"),
+		"upstream":   s.Cfg.Upstream, "version": "2.1.0"}
 	if s.Client.Pool != nil {
 		n := s.Client.Pool.Size()
-		body := map[string]any{
-			"ok": n > 0, "mode": "pool", "accounts": n,
-			"account_list": s.Client.Pool.Snapshot(),
-			"upstream":     s.Cfg.Upstream, "version": "2.1.0",
-		}
+		body["ok"] = n > 0
+		body["mode"] = "pool"
+		body["accounts"] = n
+		body["account_list"] = s.Client.Pool.Snapshot()
 		if n == 0 {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			body["error"] = "账号池为空，先执行 ./zcode2api-go.exe login"
@@ -133,11 +135,40 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "token 未加载"})
 		return
 	}
-	// 只回长度不回内容：token 不出网关
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"ok": true, "mode": "single", "token_chars": len(s.Client.Token),
-		"upstream": s.Cfg.Upstream, "version": "2.1.0",
-	})
+	body["ok"] = true
+	body["mode"] = "single"
+	body["token_chars"] = len(s.Client.Token)
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+// usageWindow 300M 包使用时段：23:00–次日 09:00（官方公告）。
+func usageWindow(now time.Time) map[string]any {
+	inWindow := now.Hour() >= 23 || now.Hour() < 9
+	if inWindow {
+		end := time.Date(now.Year(), now.Month(), now.Day(), 9, 0, 0, 0, now.Location())
+		if now.Hour() >= 23 {
+			end = end.Add(24 * time.Hour)
+		}
+		return map[string]any{"active": true, "until": end.Format("01-02 15:04"),
+			"remaining_min": int(end.Sub(now).Minutes())}
+	}
+	start := time.Date(now.Year(), now.Month(), now.Day(), 23, 0, 0, 0, now.Location())
+	return map[string]any{"active": false, "starts_at": start.Format("01-02 15:04"),
+		"in_min": int(start.Sub(now).Minutes())}
+}
+
+// nextClaimTime 下一个领取尝试时刻（19:05/20:05/21:05/22:05，与 main 的定时一致）。
+func nextClaimTime(now time.Time) time.Time {
+	for day := 0; day < 2; day++ {
+		base := time.Date(now.Year(), now.Month(), now.Day()+day, 0, 0, 0, 0, now.Location())
+		for _, mins := range []int{19*60 + 5, 20*60 + 5, 21*60 + 5, 22*60 + 5} {
+			t := base.Add(time.Duration(mins) * time.Minute)
+			if t.After(now) {
+				return t
+			}
+		}
+	}
+	return now.Add(24 * time.Hour)
 }
 
 // mapUpstreamError 对齐 _map_upstream_error：401=token 过期、405/3012=白名单失效、429=限流。
