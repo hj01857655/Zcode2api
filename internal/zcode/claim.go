@@ -109,8 +109,8 @@ func claimHeaders(jwt, deviceMid string) http.Header {
 	return h
 }
 
-// claimPost 领取协议的 POST 帮手。
-func claimPost(client *http.Client, path string, jwt, deviceMid string, body any) (map[string]any, error) {
+// claimPost 领取协议的 POST 帮手；captchaParam 非空时带阿里云验证码头。
+func claimPost(client *http.Client, path string, jwt, deviceMid string, body any, captchaParam string) (map[string]any, error) {
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -120,6 +120,10 @@ func claimPost(client *http.Client, path string, jwt, deviceMid string, body any
 		return nil, err
 	}
 	req.Header = claimHeaders(jwt, deviceMid)
+	if captchaParam != "" {
+		req.Header.Set("X-Aliyun-Captcha-Verify-Param", captchaParam)
+		req.Header.Set("X-Aliyun-Captcha-Verify-Region", "cn")
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -162,7 +166,7 @@ func ReportActivation(client *http.Client, jwt, deviceMid string) error {
 			"source_page":        "",
 			"source_element":     "{}",
 		}
-		payload, err := claimPost(client, EventReport, jwt, deviceMid, body)
+		payload, err := claimPost(client, EventReport, jwt, deviceMid, body, "")
 		if err != nil {
 			return fmt.Errorf("%s: %w", event, err)
 		}
@@ -274,13 +278,27 @@ func ClaimBestForToken(client *http.Client, jwt, deviceMid string) (string, []Pl
 			best = p
 		}
 	}
-	payload, err := claimPost(client, ClaimPath, jwt, deviceMid, map[string]string{"plan_id": best.PlanID})
+	payload, err := claimPost(client, ClaimPath, jwt, deviceMid, map[string]string{"plan_id": best.PlanID}, "")
 	if err != nil {
 		return "claim 请求失败: " + err.Error(), plans
 	}
 	code := 0
 	if c, ok := payload["code"].(float64); ok {
 		code = int(c)
+	}
+	// 3007 = 验证码未通过：现场求解阿里云 captcha 后带 param 重试一次
+	// （param 一次性，每次 claim 必须重新求）。
+	if code == 3007 {
+		if param, serr := SolveCaptcha(); serr == nil {
+			if p2, err2 := claimPost(client, ClaimPath, jwt, deviceMid, map[string]string{"plan_id": best.PlanID}, param); err2 == nil {
+				payload, code = p2, 0
+				if cv, ok := p2["code"].(float64); ok {
+					code = int(cv)
+				}
+			}
+		} else {
+			return "领取需要验证码，求解失败: " + serr.Error(), plans
+		}
 	}
 	switch {
 	case code == 0:
