@@ -136,6 +136,6 @@ docs/                         PROTOCOL.md / OAUTH.md / PAID.md
 docker compose up -d          # 需先配置 .env（见 .env.example）
 ```
 
-镜像发布至 GHCR（跟随 `v*` 标签，linux/amd64 + linux/arm64）。
+镜像同时发布到 GHCR：`ghcr.io/hj01857655/zcode2api-go`（跟随 `v*` 标签发布，含 `latest` 与 `major.minor`，linux/amd64 + linux/arm64）。
 二进制发版：推送 `v*` 标签、发布 Release 或手动触发 workflow_dispatch 后，
 Actions 构建 linux / windows / darwin 的 amd64 + arm64 六平台 tar.gz 产物。
