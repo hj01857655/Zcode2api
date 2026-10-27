@@ -31,6 +31,11 @@ const (
 
 var ClaimOrigin = "https://zcode.z.ai"
 
+// CST8 官方活动时区=北京时间（中国无夏令时，用固定偏移，Windows/精简容器
+// 没有 IANA tzdb 也可用）。领取投放（UTC 11:00 起）与 300M 使用窗口
+// （UTC 15:00–次日 01:00）都按它算，与部署机本地时区无关。
+var CST8 = time.FixedZone("UTC+8", 8*3600)
+
 // claimErrText 上游错误码的中文说明（脚本 FAILURE_LABELS 口径）。
 var claimErrText = map[int]string{
 	1001: "没有这个套餐",

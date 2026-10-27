@@ -116,14 +116,15 @@ func serve() {
 	log.Fatal(http.ListenAndServe(addr, srv.Handler()))
 }
 
-// claimSlots 每天尝试领取的时刻（距 00:00 的分钟数，本地时区=北京时间）。
-// 投放 19:00 起；多试几次覆盖投放延迟。
+// claimSlots 每天尝试领取的时刻（距 00:00 的分钟数，北京时间 zcode.CST8）。
+// 投放 19:00（=UTC 11:00）起；多试几次覆盖投放延迟。
 var claimSlots = []int{19*60 + 5, 20*60 + 5, 21*60 + 5, 22*60 + 5}
 
 // nextClaimSlot 下一个领取尝试时刻（今天剩余的 slot，否则明天 19:05）。
 func nextClaimSlot(now time.Time) time.Time {
+	now = now.In(zcode.CST8)
 	for day := 0; day < 2; day++ {
-		base := time.Date(now.Year(), now.Month(), now.Day()+day, 0, 0, 0, 0, now.Location())
+		base := time.Date(now.Year(), now.Month(), now.Day()+day, 0, 0, 0, 0, zcode.CST8)
 		for _, mins := range claimSlots {
 			t := base.Add(time.Duration(mins) * time.Minute)
 			if t.After(now) {

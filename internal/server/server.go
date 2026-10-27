@@ -141,26 +141,29 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-// usageWindow 300M 包使用时段：北京 23:00–次日 09:00（官方 UTC 15:00–01:00）。
+// usageWindow 300M 包使用时段：北京 23:00–次日 09:00（官方 UTC 15:00–01:00），
+// 按固定 CST8 计算，与部署机时区无关（Docker 默认 UTC 也能算对）。
 func usageWindow(now time.Time) map[string]any {
+	now = now.In(zcode.CST8)
 	inWindow := now.Hour() >= 23 || now.Hour() < 9
 	if inWindow {
-		end := time.Date(now.Year(), now.Month(), now.Day(), 9, 0, 0, 0, now.Location())
+		end := time.Date(now.Year(), now.Month(), now.Day(), 9, 0, 0, 0, zcode.CST8)
 		if now.Hour() >= 23 {
 			end = end.Add(24 * time.Hour)
 		}
 		return map[string]any{"active": true, "until": end.Format("01-02 15:04"),
 			"remaining_min": int(end.Sub(now).Minutes())}
 	}
-	start := time.Date(now.Year(), now.Month(), now.Day(), 23, 0, 0, 0, now.Location())
+	start := time.Date(now.Year(), now.Month(), now.Day(), 23, 0, 0, 0, zcode.CST8)
 	return map[string]any{"active": false, "starts_at": start.Format("01-02 15:04"),
 		"in_min": int(start.Sub(now).Minutes())}
 }
 
-// nextClaimTime 下一个领取尝试时刻（19:05/20:05/21:05/22:05，与 main 的定时一致）。
+// nextClaimTime 下一个领取尝试时刻（北京 19:05/20:05/21:05/22:05，与 main 的定时一致）。
 func nextClaimTime(now time.Time) time.Time {
+	now = now.In(zcode.CST8)
 	for day := 0; day < 2; day++ {
-		base := time.Date(now.Year(), now.Month(), now.Day()+day, 0, 0, 0, 0, now.Location())
+		base := time.Date(now.Year(), now.Month(), now.Day()+day, 0, 0, 0, 0, zcode.CST8)
 		for _, mins := range []int{19*60 + 5, 20*60 + 5, 21*60 + 5, 22*60 + 5} {
 			t := base.Add(time.Duration(mins) * time.Minute)
 			if t.After(now) {
