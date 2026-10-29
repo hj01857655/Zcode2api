@@ -48,8 +48,8 @@ func TestSealCredentialRoundTrip(t *testing.T) {
 	}
 }
 
-// WritebackToken：临时目录里写回 config.json apiKey + credentials.json zcodejwttoken，
-// 其它键原样保留，token 在落盘文件中只以密文出现。
+// TestDeviceFlowLogin：init 用自造 pollToken、poll 改用服务端下发的 poll_token、
+// ready 返回 data.token。Login 只返回 token，落盘在调用方（main.go runLogin）。
 func TestDeviceFlowLogin(t *testing.T) {
 	var selfToken string
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -1,6 +1,7 @@
 # ZCode Start Plan 协议（实测锁定）
 
 > 三通道索引：**免费模型请求** → PROTOCOL.md ｜ **OAuth 登录** → OAUTH.md ｜ **付费 coding-plan + V4 签名** → PAID.md
+> 配套：**领取协议** → CLAIM.md ｜ **token 生命周期** → TOKEN.md ｜ **协议分析报告** → REPORT.md
 
 > 2026-10-26，ZCode 3.16.3 CLI 真机抓包 + 26 发消融矩阵。协议如变需重新校准。
 
@@ -46,6 +47,16 @@ output_config.effort：low=纯文本、high/max=带思考块；不传=无思考�
 前缀匹配：seg1 改末尾字符可过、其后可追加自定义段、cache_control 可省。
 仅 seg0 或无 system → 405 + `{"code":3012,"msg":"request has been blocked due to unusual activity."}`。
 不校验：HTTP 头、UA、TLS 指纹、device_id、metadata、IP、频率。
+
+### 备选 system 前缀
+
+| 前缀 | 来源 | 形状 | 状态 |
+|---|---|---|---|
+| 主线 | 真机抓包（`assets/prefix.json`） | seg0 42c + seg1 2313c | 实测 200，网关内置 |
+| 备选 | model-io rollout 提取（Python 版仓库 `exp/system_prefix_full.json`） | 3 段共 8599c（seg1 3110c 完整版） | 2026-10-26 实测 200 |
+
+备选版是官方 CLI 不同 surface 的完整 system 全文（4 个变体在 `exp/system_full_3.16.3.json`）。
+主线前缀失效（官方收紧/换版）时切换备选是第一逃生通道；两版均实测通过，且可各自追加自定义段。
 
 ## 三种对外协议入口
 
@@ -136,6 +147,7 @@ billing/balance 返回 plans[]（entitlements[].capabilities = 模型白名单�
 key=SHA256("zcode-credential-fallback:{platform}:{home}:{username}")，iv 12B，tag 16B。
 zcodejwttoken 亦明文存于 ~/.zcode/v2/config.json 的 provider["builtin:bigmodel-start-plan"].options.apiKey。
 zcodejwttoken 短期有效，过期 = 401；重登 ZCode CLI/GUI 刷新，或走 docs/OAUTH.md。
+生命周期、来源链与失效处理全图见 docs/TOKEN.md。
 
 ## 官方文档（repo 快照已删，结论留存）
 

@@ -170,9 +170,10 @@ func (c *Client) send(token string, body []byte) (*http.Response, error) {
 	return resp, nil
 }
 
-// LoadToken token 解析顺序：env ZCODE_TOKEN > ~/.zcode/v2/config.json 的
-// builtin:bigmodel-start-plan apiKey（明文存放的 zcodejwttoken 本体）。
-// 不走 credentials.json 的 AES-GCM 层——同一 token 在 config.json 里有明文副本，
+// LoadToken token 解析顺序（池为空时的单账号链）：config token_source > env
+// ZCODE_TOKEN > token.json 旧格式单对象 > ~/.zcode/v2/config.json 的 start-plan
+// provider apiKey（明文存放的 zcodejwttoken 本体）。
+// 不走 credentials.json 的 AES-256-GCM 层——同一 token 在 config.json 里有明文副本，
 // 纯 stdlib 即可完成，等价于 zk.token() 的取值结果。
 func LoadToken(explicit string) string {
 	if explicit != "" {

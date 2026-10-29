@@ -1,9 +1,10 @@
 # ZCode 付费通道（coding-plan + V4 签名）
 
 > 三通道索引：**免费模型请求** → PROTOCOL.md ｜ **OAuth 登录** → OAUTH.md ｜ **付费 coding-plan + V4 签名** → PAID.md
+> 配套：**领取协议** → CLAIM.md ｜ **token 生命周期** → TOKEN.md ｜ **协议分析报告** → REPORT.md
 
 > 三条通道之二。另见 docs/PROTOCOL.md（start-plan 模型请求）、docs/OAUTH.md（OAuth 登录）。
-> V4 签名官方未开源；以下取自 zcode.cjs 构建产物逆向 + 第二实现（zcode-signing.ts）交叉验证。
+> V4 签名官方未开源；以下取自 zcode.cjs 构建产物分析 + 第二实现（zcode-signing.ts）交叉验证。
 
 ## 通道定位
 

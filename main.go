@@ -5,8 +5,8 @@
 //	go build -o zcode2api-go.exe .
 //	.\zcode2api-go.exe            # 默认 127.0.0.1:3010
 //
-// token 来源：env ZCODE_TOKEN > ~/.zcode/v2/config.json 的
-// builtin:bigmodel-start-plan apiKey（与 Python 版 zk.token() 取值等价）。
+// token 来源：账号池 token.json（login 写入）优先；池为空时退回
+// config token_source / env ZCODE_TOKEN / ~/.zcode/v2/config.json（internal/zcode.LoadToken）。
 package main
 
 import (
@@ -32,8 +32,8 @@ func main() {
 	serve()
 }
 
-// runLogin OAuth device flow：浏览器授权 → 新 zcodejwttoken → 写回
-// config.json apiKey + credentials.json（CLI/GUI 登录态同步恢复）。
+// runLogin OAuth device flow：浏览器授权 → 新 zcodejwttoken → 存入 token.json
+// 账号池（label 默认品牌名，同名刷新；不写 ~/.zcode 的 IDE 凭证）。
 func runLogin() {
 	// 用法：zcode2api-go.exe login [zai|bigmodel]，默认 zai
 	provider := "zai"

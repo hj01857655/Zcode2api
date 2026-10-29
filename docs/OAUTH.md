@@ -1,6 +1,7 @@
 # ZCode OAuth
 
 > 三通道索引：**免费模型请求** → PROTOCOL.md ｜ **OAuth 登录** → OAUTH.md ｜ **付费 coding-plan + V4 签名** → PAID.md
+> 配套：**领取协议** → CLAIM.md ｜ **token 生命周期** → TOKEN.md ｜ **协议分析报告** → REPORT.md
 
 ## 品牌
 
@@ -42,26 +43,26 @@ data.token 即 zcodejwttoken，无二次交换。
 ## 网关实现
 
 ```
-zcode2api-go.exe login
+zcode2api-go.exe login [zai|bigmodel] [label]
 ```
 
-流程：init → 打印 authorize_url → 2s 间隔轮询 poll → ready 取 data.token → 写回两处：
+流程：init → 打印 authorize_url（并调系统浏览器）→ 2s 间隔轮询 poll（上限 150 次）→
+ready 取 data.token → 写入 **token.json 账号池**（`{accounts:[{label,provider,token,saved_at}]}`，
+0600 原子写；label 默认品牌名，同名 Upsert）。
 
-- config.json 的 provider["builtin:bigmodel-start-plan"].options.apiKey（明文，网关下次启动读）
-- ~/.zcode/v2/credentials.json 的 zcodejwttoken（enc:v1 加密，CLI/GUI 登录态同步）
-
-写回语义：其它键原样保留，落盘 token 仅以密文出现，写前不破坏原文件结构。
-运行中网关遇 401 自动重读 token 并重试一次，login 完成后无需重启。
+**不写 `~/.zcode` 的任何文件**（旧版写回 config.json apiKey + credentials.json 的行为已移除，
+`auth.go` 仅留过时注释）。运行中的网关遇 401 会重读 token 源并重试一次；池模式则冷却换号
+——详见 docs/TOKEN.md。
 
 ## 实测（2026-10-26）
 
 - bigmodel init → 200，flow_id 0bd455291e426ee047728b86af019a86
 - zai init → 200，flow_id a8d193f2fb76797fb46dbc4750476c7c
 - poll pending 正常流转
-- ready 写回：Go 侧离线测试覆盖（auth_test.go），线上真登未执行
+- ready 后 token 池化落盘：Go 侧离线测试覆盖（auth_test.go），线上真登未执行
 
 ## 边界
 
-- zcodejwttoken 短期有效，过期 = 模型请求 401 空 body
-- refresh_token 已存储，静默续期未实现
-- GUI 同时运行可能与写回产生竞态
+- zcodejwttoken 短期有效，过期 = 模型请求 401 空 body（失效处理全图见 docs/TOKEN.md）
+- refresh_token 已随 poll 数据可见，静默续期未实现——过期唯一出路是重新 login
+- 2026-09 起官方协议：poll 必须用服务端 init 下发的 poll_token（auth.go 已对齐）

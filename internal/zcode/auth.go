@@ -1,12 +1,11 @@
-// OAuth device flow 登录与 token 写回。
-// 协议对齐 dengyie app/oauth.py（官方 zcode.cjs createZaiCliOAuthClient）：
+// OAuth device flow 登录。协议对齐 dengyie app/oauth.py（官方 zcode.cjs createZaiCliOAuthClient）：
 //   - init:  POST {base}/oauth/cli/init，仅 Authorization: Bearer <pollToken> + Content-Type，
 //     body {"provider": d.Provider}；响应 data.poll_token 由服务端下发时优先采用；
 //   - poll:  GET {base}/oauth/cli/poll/{flow_id}，2s 轮询；ready 时 data.token 即 zcodejwttoken
 //     （无需两级交换——start-plan 认的就是它；data.zai.access_token 是兑换 project token 的
 //     oauth 凭证，网关用不到，不取）；
-//   - 写回：config.json 的 builtin:bigmodel-start-plan apiKey（网关下次启动读它）+
-//     credentials.json 的 zcodejwttoken 键（enc:v1 AES-256-GCM，CLI/GUI 登录态同步恢复）。
+//   - Login 只返回 token，落盘交给调用方（当前写 token.json 账号池，见 main.go runLogin；
+//     不写 ~/.zcode 的 IDE 凭证）。
 package zcode
 
 import (
@@ -231,13 +230,7 @@ func (d *DeviceFlow) Login() (string, error) {
 	return "", fmt.Errorf("登录超时（等待 %s）", time.Duration(d.MaxTries)*d.PollWait)
 }
 
-// WritebackToken 把新 token 写回两处持久层，下次启动自动生效：
-//   - configPath 的 provider["builtin:bigmodel-start-plan"].options.apiKey（明文）
-//   - credPath 的 zcodejwttoken 键（enc:v1 AES-256-GCM，其它键原样保留）
-//
-// 任一文件不存在则跳过该处（返回值注明写回了哪些）。token 值不打印。
-
-// WritebackDefaultPaths 用真实 ~/.zcode/v2 路径写回。
+// ---------- 本地 token 存储（不写入 ~/.zcode 的 IDE 凭证） ----------
 
 func truncateStr(s string, n int) string {
 	if len(s) > n {
