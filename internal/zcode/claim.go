@@ -24,7 +24,7 @@ const (
 	ClaimPreview  = "/api/v1/zcode-plan/billing/preview"
 	ClaimPath     = "/api/v1/zcode-plan/billing/claim"
 	EventReport   = "/api/v1/event/report"
-	ClaimAppVer   = "3.14.0"
+	ClaimAppVer   = "3.16.3"
 	ClaimPlatform = "win32-x64"
 )
 
