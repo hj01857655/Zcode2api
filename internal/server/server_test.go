@@ -224,7 +224,7 @@ func TestModelsAndHealth(t *testing.T) {
 	for _, d := range data {
 		ids[d.(map[string]any)["id"].(string)] = true
 	}
-	for _, want := range []string{"GLM-5.3-Flash", "GLM-5.3", "GLM-4.7"} {
+	for _, want := range []string{"GLM-5.3-Flash", "GLM-5.3"} {
 		if !ids[want] {
 			t.Fatalf("models 应含 %s, got %v", want, data)
 		}

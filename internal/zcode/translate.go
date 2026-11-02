@@ -17,7 +17,6 @@ import (
 var ModelMap = map[string]string{
 	"glm-5.3-flash": "GLM-5.3-Flash",
 	"glm-5.3":       "GLM-5.3",
-	"glm-4.7":       "GLM-4.7",
 }
 
 // SentinelTools thinking=disabled 时必须携带的空壳工具（描述上劝退模型调用）。
@@ -425,6 +424,11 @@ type Delta struct {
 	ErrText  string // 非 JSON 上游负载或 error 事件
 	UsageIn  *float64
 	UsageOut *float64
+	// token 四元组补全：cache 读写（上游 message_start.usage 的
+	// cache_read_input_tokens / cache_creation_input_tokens）。观测对齐
+	// zcode-switch 网关的 tin/tout/tcr/tcw 四元组。
+	CacheRead      *float64
+	CacheCreation  *float64
 
 	// 工具调用：上游 content_block_start(tool_use) 给 id/name，随后 input_json_delta 分批给参数。
 	BlockIndex int    // 上游 content block index（对应 OpenAI tool_calls[].index）
@@ -448,6 +452,12 @@ func TranslateSSELine(payload string) *Delta {
 		if ev.Message != nil && ev.Message.Usage != nil {
 			if v, ok := ev.Message.Usage["input_tokens"].(float64); ok {
 				d.UsageIn = &v
+			}
+			if v, ok := ev.Message.Usage["cache_read_input_tokens"].(float64); ok {
+				d.CacheRead = &v
+			}
+			if v, ok := ev.Message.Usage["cache_creation_input_tokens"].(float64); ok {
+				d.CacheCreation = &v
 			}
 		}
 		return d

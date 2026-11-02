@@ -267,10 +267,10 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.Unmarshal(body, &meta)
 	if req.Stream {
-		s.streamResponses(w, meta.Model, body)
+		s.streamResponses(w, zcode.NewObs(s.Log, "responses", true, meta.Model, r.UserAgent()), meta.Model, body)
 		return
 	}
-	s.aggregateResponses(w, meta.Model, body)
+	s.aggregateResponses(w, zcode.NewObs(s.Log, "responses", false, meta.Model, r.UserAgent()), meta.Model, body)
 }
 
 // responsesObject 组装 Responses 响应对象。
@@ -322,9 +322,10 @@ func responsesObjectWithTools(id, model, text, status string, in, out int, tc *t
 }
 
 // aggregateResponses 非流式：聚合上游 SSE → 单个 response 对象。
-func (s *Server) aggregateResponses(w http.ResponseWriter, model string, body []byte) {
+func (s *Server) aggregateResponses(w http.ResponseWriter, obs *zcode.Obs, model string, body []byte) {
 	resp, err := s.upstreamMessages(body)
 	if err != nil {
+		obs.Done(502, upStatusOf(err), "error", 0, 0, 0, 0, err.Error())
 		if ue, ok := err.(*zcode.UpstreamError); ok {
 			s.mapUpstreamError(w, ue.Status, ue.Body)
 			return
@@ -333,8 +334,9 @@ func (s *Server) aggregateResponses(w http.ResponseWriter, model string, body []
 		return
 	}
 	defer resp.Body.Close()
+	obs.UpStatus = resp.StatusCode
 	text := ""
-	var in, out int
+	var in, out, tcr, tcw float64
 	acc := newToolAccum()
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 64*1024), 8*1024*1024)
@@ -348,14 +350,24 @@ func (s *Server) aggregateResponses(w http.ResponseWriter, model string, body []
 			continue
 		}
 		if d.ErrText != "" {
+			obs.Done(502, resp.StatusCode, "error", int64(in), int64(out), int64(tcr), int64(tcw), d.ErrText)
 			errJSON(w, http.StatusBadGateway, "upstream: "+d.ErrText, "zcode2api_error")
 			return
 		}
+		if d.Content != "" || d.Reason != "" || d.ToolArgs != "" {
+			obs.FirstByte()
+		}
 		if d.UsageIn != nil {
-			in = int(*d.UsageIn)
+			in = *d.UsageIn
 		}
 		if d.UsageOut != nil {
-			out = int(*d.UsageOut)
+			out = *d.UsageOut
+		}
+		if d.CacheRead != nil {
+			tcr = *d.CacheRead
+		}
+		if d.CacheCreation != nil {
+			tcw = *d.CacheCreation
 		}
 		acc.add(d)
 		text += d.Content
@@ -365,15 +377,17 @@ func (s *Server) aggregateResponses(w http.ResponseWriter, model string, body []
 	if !acc.empty() {
 		tcPtr = acc
 	}
-	_ = json.NewEncoder(w).Encode(responsesObjectWithTools("resp_"+zcode.UUIDv4()[:24], model, text, "completed", in, out, tcPtr))
+	_ = json.NewEncoder(w).Encode(responsesObjectWithTools("resp_"+zcode.UUIDv4()[:24], model, text, "completed", int(in), int(out), tcPtr))
+	obs.Done(200, resp.StatusCode, "completed", int64(in), int64(out), int64(tcr), int64(tcw), "")
 }
 
 // streamResponses 流式：Anthropic SSE → Responses 事件集。
-func (s *Server) streamResponses(w http.ResponseWriter, model string, body []byte) {
+func (s *Server) streamResponses(w http.ResponseWriter, obs *zcode.Obs, model string, body []byte) {
 	resp, err := s.upstreamMessages(body)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	if err != nil {
+		obs.Done(200, upStatusOf(err), "error", 0, 0, 0, 0, err.Error())
 		msg := "upstream: " + err.Error()
 		if ue, ok := err.(*zcode.UpstreamError); ok {
 			switch {
@@ -391,21 +405,21 @@ func (s *Server) streamResponses(w http.ResponseWriter, model string, body []byt
 		return
 	}
 	defer resp.Body.Close()
-	flusher, _ := w.(http.Flusher)
+	lk := newSSELock(w)
+	stopKA := startKeepalive(lk, time.Duration(s.Cfg.KeepaliveSecs)*time.Second)
+	defer stopKA()
 
 	rid := "resp_" + zcode.UUIDv4()[:24]
 	mid := "msg_" + zcode.UUIDv4()[:24]
-	sse(w, map[string]any{"type": "response.created", "response": responsesObject(rid, model, "", "in_progress", 0, 0)})
-	sse(w, map[string]any{
+	sse(lk, map[string]any{"type": "response.created", "response": responsesObject(rid, model, "", "in_progress", 0, 0)})
+	sse(lk, map[string]any{
 		"type": "response.output_item.added", "output_index": 0,
 		"item": map[string]any{"id": mid, "type": "message", "status": "in_progress", "role": "assistant", "content": []any{}},
 	})
-	if flusher != nil {
-		flusher.Flush()
-	}
 
 	text := ""
-	var in, out int
+	var in, out, tcr, tcw float64
+	finish := ""
 	acc := newToolAccum()
 	started := map[int]bool{}
 	sc := bufio.NewScanner(resp.Body)
@@ -419,56 +433,60 @@ func (s *Server) streamResponses(w http.ResponseWriter, model string, body []byt
 		if d == nil {
 			continue
 		}
-		if d.ErrText != "" {
-			sse(w, map[string]any{"type": "error", "error": map[string]any{"message": truncate(d.ErrText, 400)}})
-			return
+		if d.Content != "" || d.Reason != "" || d.ToolArgs != "" {
+			obs.FirstByte()
 		}
 		if d.UsageIn != nil {
-			in = int(*d.UsageIn)
+			in = *d.UsageIn
 		}
 		if d.UsageOut != nil {
-			out = int(*d.UsageOut)
+			out = *d.UsageOut
+		}
+		if d.CacheRead != nil {
+			tcr = *d.CacheRead
+		}
+		if d.CacheCreation != nil {
+			tcw = *d.CacheCreation
+		}
+		if d.Finish != "" {
+			finish = d.Finish
+		}
+		if d.ErrText != "" {
+			obs.Done(200, resp.StatusCode, "error", int64(in), int64(out), int64(tcr), int64(tcw), d.ErrText)
+			sse(w, map[string]any{"type": "error", "error": map[string]any{"message": truncate(d.ErrText, 400)}})
+			return
 		}
 		if d.ToolID != "" {
 			acc.add(d)
 			started[d.BlockIndex] = true
-			sse(w, map[string]any{
+			sse(lk, map[string]any{
 				"type": "response.output_item.added", "output_index": d.BlockIndex + 1,
 				"item": map[string]any{
 					"id": "fc_" + zcode.UUIDv4()[:24], "type": "function_call",
 					"status": "in_progress", "call_id": d.ToolID, "name": d.ToolName, "arguments": "",
 				},
 			})
-			if flusher != nil {
-				flusher.Flush()
-			}
 		}
 		if d.ToolArgs != "" {
 			acc.add(d)
-			sse(w, map[string]any{
+			sse(lk, map[string]any{
 				"type": "response.function_call_arguments.delta", "item_id": "fc_" + zcode.UUIDv4()[:24],
 				"output_index": d.BlockIndex + 1, "delta": d.ToolArgs,
 			})
-			if flusher != nil {
-				flusher.Flush()
-			}
 		}
 		if d.Content != "" {
 			text += d.Content
-			sse(w, map[string]any{
+			sse(lk, map[string]any{
 				"type": "response.output_text.delta", "item_id": mid, "output_index": 0,
 				"content_index": 0, "delta": d.Content,
 			})
-			if flusher != nil {
-				flusher.Flush()
-			}
 		}
 	}
 	var tcPtr *toolAccum
 	if !acc.empty() {
 		tcPtr = acc
 	}
-	obj := responsesObjectWithTools(rid, model, text, "completed", in, out, tcPtr)
+	obj := responsesObjectWithTools(rid, model, text, "completed", int(in), int(out), tcPtr)
 	sse(w, map[string]any{
 		"type": "response.output_item.done", "output_index": 0,
 		"item": map[string]any{
@@ -477,6 +495,7 @@ func (s *Server) streamResponses(w http.ResponseWriter, model string, body []byt
 		},
 	})
 	sse(w, map[string]any{"type": "response.completed", "response": obj})
+	obs.Done(200, resp.StatusCode, finish, int64(in), int64(out), int64(tcr), int64(tcw), "")
 }
 
 // sse 写一帧 Responses 事件（event 行 + data 行）。

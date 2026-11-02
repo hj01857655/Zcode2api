@@ -57,16 +57,28 @@ type Client struct {
 	Token string // 单账号模式 token（Pool 为 nil 时用）
 	Pool  *Pool  // 非 nil 时按账号池选号，失败账号冷却后换下一个
 	HTTP  *http.Client
+	// TotalTimeout 单次上游请求（含响应体读取）的整体超时兜底；0 = 不限。
+	// 对齐 zcode-switch 网关 total_timeout_secs 语义。
+	TotalTimeout time.Duration
 	// Dump 可选抓包回调：direction 为 "req"/"resp"，payload 为原始字节。
 	Dump func(direction, label string, status int, payload []byte)
 }
 
-// New 装配默认客户端（timeout 300s 对齐 server.py 的 httpx.Timeout(300, connect=15)）。
+// New 装配默认客户端。TotalTimeout>0 时作为整体超时兜底
+// （http.Client.Timeout 语义=建连到读完 body 的全程，正合兜底需求；
+// 不用 per-request context——defer cancel 会在流式 body 读取前掐断）。
 func New(base, token string) *Client {
 	return &Client{
 		Base:  base,
 		Token: token,
 		HTTP:  &http.Client{Timeout: 300 * time.Second},
+	}
+}
+
+// SetTotalTimeout 设置整体超时兜底；0 = 维持默认 300s。
+func (c *Client) SetTotalTimeout(d time.Duration) {
+	if d > 0 {
+		c.HTTP.Timeout = d
 	}
 }
 
@@ -91,6 +103,21 @@ func (e *UpstreamError) Error() string {
 	return fmt.Sprintf("upstream %d: %s", e.Status, e.Body)
 }
 
+// stickyKey 从 Anthropic body 提取会话亲和键（metadata.user_id）。
+// agent 客户端全程携带同一 user_id——同会话固定同号，上下文缓存命中率高；
+// 缺失/解析失败返回空（退化为普通轮转）。
+func stickyKey(body []byte) string {
+	var m struct {
+		Metadata struct {
+			UserID string `json:"user_id"`
+		} `json:"metadata"`
+	}
+	if json.Unmarshal(body, &m) == nil {
+		return m.Metadata.UserID
+	}
+	return ""
+}
+
 // Messages 发送 anthropic 协议 body（已序列化的 JSON），返回上游 SSE 响应。
 // 语义对齐终版 server.py：无论下游请求流式与否，上游一律 stream=true，
 // 非流式由 handler 聚合——绕开 stream:false 的未知行为。
@@ -106,19 +133,25 @@ func (c *Client) Messages(body []byte) (*http.Response, error) {
 	}
 	var lastErr error
 	for i := 0; i < tries; i++ {
-		acc, ok := c.Pool.Pick()
+		acc, ok := c.Pool.PickSticky(stickyKey(body)) // 会话亲和：同 user_id 固定同号
 		if !ok {
-			break
+			break // 全局风控闸或全冷却：fail-fast
 		}
 		resp, err := c.send(acc.Token, body)
 		if err == nil {
+			c.Pool.Settle(acc.Label, true)
 			return resp, nil
 		}
 		lastErr = err
 		if ue, ok := err.(*UpstreamError); ok {
 			d := cooldownFor(ue)
+			_ = c.Pool.Settle(acc.Label, false) // 熔断双闸记账（窗口/连败）
 			if d > 0 {
 				c.Pool.Cooldown(acc.Label, d)
+				// IP 级风控（405/3012）：设全局退避闸，其余号不再排队挨撞
+				if ue.Status == http.StatusMethodNotAllowed || strings.Contains(ue.Body, "3012") {
+					c.Pool.SetGlobalBackoff(d)
+				}
 				continue // 换下一个账号
 			}
 		}

@@ -10,8 +10,10 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"zcode2api/internal/config"
@@ -24,6 +26,7 @@ type Server struct {
 	Cfg    *config.Config
 	Client *zcode.Client
 	Prefix []string // system 白名单前缀（seg0+seg1）
+	Log    *zcode.LogSink
 	// TokenLoader 401 时的 token 重读函数（可注入测试）；默认读 env/配置文件。
 	// 返回与当前不同的非空值则热替换 Client.Token 并重试一次。
 	TokenLoader func() string
@@ -31,7 +34,59 @@ type Server struct {
 
 // New 装配。
 func New(cfg *config.Config, client *zcode.Client) *Server {
-	return &Server{Cfg: cfg, Client: client, Prefix: zcode.SystemPrefix()}
+	if cfg.TotalTimeoutSecs > 0 {
+		client.SetTotalTimeout(time.Duration(cfg.TotalTimeoutSecs) * time.Second)
+	}
+	return &Server{
+		Cfg: cfg, Client: client, Prefix: zcode.SystemPrefix(),
+		Log: zcode.NewLogSink(cfg.RequestLog),
+	}
+}
+
+// sseLock 流式写代理：泵循环与 keepalive goroutine 并发写 ResponseWriter 的
+// 串行化层。实现 io.Writer，fmt.Fprint(lk, ...) / sse(lk, ...) 直接可用。
+type sseLock struct {
+	mu sync.Mutex
+	w  io.Writer
+	f  http.Flusher
+}
+
+func newSSELock(w http.ResponseWriter) *sseLock {
+	f, _ := w.(http.Flusher)
+	return &sseLock{w: w, f: f}
+}
+
+func (s *sseLock) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n, err := s.w.Write(p)
+	if s.f != nil {
+		s.f.Flush()
+	}
+	return n, err
+}
+
+// startKeepalive SSE 空闲心跳：interval<=0 关闭。返回 stop，泵退出时必须调
+// （defer）。帧用 SSE 注释行 `: keepalive`——所有标准 SSE 解析器忽略注释，
+// 不污染 OpenAI/Anthropic/Responses 任何一种事件流。
+func startKeepalive(lk *sseLock, interval time.Duration) func() {
+	if interval <= 0 {
+		return func() {}
+	}
+	stop := make(chan struct{})
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				_, _ = lk.Write([]byte(": keepalive\n\n"))
+			}
+		}
+	}()
+	return func() { close(stop) }
 }
 
 // upstreamMessages 发上游请求；401 时尝试重读 token 并重试一次
@@ -257,16 +312,17 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Stream {
-		s.streamChat(w, model, body)
+		s.streamChat(w, zcode.NewObs(s.Log, "chat", true, model, r.UserAgent()), model, body)
 		return
 	}
-	s.aggregateChat(w, model, body)
+	s.aggregateChat(w, zcode.NewObs(s.Log, "chat", false, model, r.UserAgent()), model, body)
 }
 
 // aggregateChat 非流式：消费上游 SSE 聚合为单个 chat.completion（对齐 _collect_sse 路径）。
-func (s *Server) aggregateChat(w http.ResponseWriter, model string, body []byte) {
+func (s *Server) aggregateChat(w http.ResponseWriter, obs *zcode.Obs, model string, body []byte) {
 	resp, err := s.upstreamMessages(body)
 	if err != nil {
+		obs.Done(502, upStatusOf(err), "error", 0, 0, 0, 0, err.Error())
 		if ue, ok := err.(*zcode.UpstreamError); ok {
 			s.mapUpstreamError(w, ue.Status, ue.Body)
 			return
@@ -275,10 +331,11 @@ func (s *Server) aggregateChat(w http.ResponseWriter, model string, body []byte)
 		return
 	}
 	defer resp.Body.Close()
+	obs.UpStatus = resp.StatusCode
 
 	text, reasoning, finish := "", "", ""
 	acc := newToolAccum()
-	var in, out float64
+	var in, out, tcr, tcw float64
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 64*1024), 8*1024*1024)
 	for sc.Scan() {
@@ -292,14 +349,24 @@ func (s *Server) aggregateChat(w http.ResponseWriter, model string, body []byte)
 		}
 		if d.ErrText != "" {
 			// 上游 error 事件 → 聚合中断，返回 502（对齐 sse_error 分支）
+			obs.Done(502, resp.StatusCode, "error", int64(in), int64(out), int64(tcr), int64(tcw), d.ErrText)
 			errJSON(w, 502, "upstream: "+d.ErrText, "zcode2api_error")
 			return
+		}
+		if d.Content != "" || d.Reason != "" || d.ToolArgs != "" {
+			obs.FirstByte()
 		}
 		if d.UsageIn != nil {
 			in = *d.UsageIn
 		}
 		if d.UsageOut != nil {
 			out = *d.UsageOut
+		}
+		if d.CacheRead != nil {
+			tcr = *d.CacheRead
+		}
+		if d.CacheCreation != nil {
+			tcw = *d.CacheCreation
 		}
 		if d.Role != "" {
 			// message_start 的 role 帧：帧本身不转发，只贡献上面的 input usage
@@ -335,13 +402,21 @@ func (s *Server) aggregateChat(w http.ResponseWriter, model string, body []byte)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(frame)
+	obs.Done(200, resp.StatusCode, finish, int64(in), int64(out), int64(tcr), int64(tcw), "")
 }
 
-// streamChat 流式：上游 SSE 逐帧翻译为 OpenAI chunk（对齐 gen() 生成器）。
-func (s *Server) streamChat(w http.ResponseWriter, model string, body []byte) {
+// upStatusOf 从上游错误中取 HTTP 状态（非 UpstreamError 返回 0）。
+func upStatusOf(err error) int {
+	if ue, ok := err.(*zcode.UpstreamError); ok {
+		return ue.Status
+	}
+	return 0
+}
+func (s *Server) streamChat(w http.ResponseWriter, obs *zcode.Obs, model string, body []byte) {
 	resp, err := s.upstreamMessages(body)
 	if err != nil {
 		// 对齐 Python：失败也以 SSE error 帧 + [DONE] 收尾
+		obs.Done(200, upStatusOf(err), "error", 0, 0, 0, 0, err.Error())
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		var msg string
@@ -373,10 +448,14 @@ func (s *Server) streamChat(w http.ResponseWriter, model string, body []byte) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	flusher, _ := w.(http.Flusher)
+	lk := newSSELock(w)
+	stopKA := startKeepalive(lk, time.Duration(s.Cfg.KeepaliveSecs)*time.Second)
+	defer stopKA()
 
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 64*1024), 8*1024*1024)
+	var in, out, tcr, tcw float64
+	finish := ""
 	for sc.Scan() {
 		line := sc.Text()
 		if !strings.HasPrefix(line, "data: ") {
@@ -386,41 +465,54 @@ func (s *Server) streamChat(w http.ResponseWriter, model string, body []byte) {
 		if d == nil {
 			continue
 		}
+		if d.Content != "" || d.Reason != "" || d.ToolArgs != "" {
+			obs.FirstByte()
+		}
+		if d.UsageIn != nil {
+			in = *d.UsageIn
+		}
+		if d.UsageOut != nil {
+			out = *d.UsageOut
+		}
+		if d.CacheRead != nil {
+			tcr = *d.CacheRead
+		}
+		if d.CacheCreation != nil {
+			tcw = *d.CacheCreation
+		}
+		if d.Finish != "" {
+			finish = d.Finish
+		}
 		switch {
 		case d.ErrText != "":
-			fmt.Fprint(w, "data: "+mustJSON(map[string]any{
+			fmt.Fprint(lk, "data: "+mustJSON(map[string]any{
 				"error": map[string]any{"message": truncate(d.ErrText, 400)}})+"\n\n")
 		case d.Role != "":
-			fmt.Fprint(w, "data: "+mustJSON(chunkFrame(model, map[string]any{"role": "assistant", "content": ""}, nil))+"\n\n")
+			fmt.Fprint(lk, "data: "+mustJSON(chunkFrame(model, map[string]any{"role": "assistant", "content": ""}, nil))+"\n\n")
 		case d.ToolID != "":
-			fmt.Fprint(w, "data: "+mustJSON(chunkFrame(model, map[string]any{
+			fmt.Fprint(lk, "data: "+mustJSON(chunkFrame(model, map[string]any{
 				"tool_calls": []any{map[string]any{
 					"index": d.BlockIndex, "id": d.ToolID, "type": "function",
 					"function": map[string]any{"name": d.ToolName, "arguments": ""},
 				}},
 			}, nil))+"\n\n")
 		case d.ToolArgs != "":
-			fmt.Fprint(w, "data: "+mustJSON(chunkFrame(model, map[string]any{
+			fmt.Fprint(lk, "data: "+mustJSON(chunkFrame(model, map[string]any{
 				"tool_calls": []any{map[string]any{
 					"index":    d.BlockIndex,
 					"function": map[string]any{"arguments": d.ToolArgs},
 				}},
 			}, nil))+"\n\n")
 		case d.Content != "":
-			fmt.Fprint(w, "data: "+mustJSON(chunkFrame(model, map[string]any{"content": d.Content}, nil))+"\n\n")
+			fmt.Fprint(lk, "data: "+mustJSON(chunkFrame(model, map[string]any{"content": d.Content}, nil))+"\n\n")
 		case d.Reason != "":
-			fmt.Fprint(w, "data: "+mustJSON(chunkFrame(model, map[string]any{"reasoning_content": d.Reason}, nil))+"\n\n")
+			fmt.Fprint(lk, "data: "+mustJSON(chunkFrame(model, map[string]any{"reasoning_content": d.Reason}, nil))+"\n\n")
 		case d.Finish != "":
-			fmt.Fprint(w, "data: "+mustJSON(chunkFrame(model, map[string]any{}, d.Finish))+"\n\n")
-		}
-		if flusher != nil {
-			flusher.Flush()
+			fmt.Fprint(lk, "data: "+mustJSON(chunkFrame(model, map[string]any{}, d.Finish))+"\n\n")
 		}
 	}
-	fmt.Fprint(w, "data: [DONE]\n\n")
-	if flusher != nil {
-		flusher.Flush()
-	}
+	fmt.Fprint(lk, "data: [DONE]\n\n")
+	obs.Done(200, resp.StatusCode, finish, int64(in), int64(out), int64(tcr), int64(tcw), "")
 }
 
 // chunkFrame 对齐 _sse：每帧新 id、finish_reason 独立帧。

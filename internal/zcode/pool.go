@@ -28,7 +28,26 @@ type Pool struct {
 	Active   string
 	cool     map[string]time.Time // label → 冷却截止
 	cursor   int
+	// 熔断双闸（对齐 zcode-switch 网关 pool.rs）：
+	// hist —— 成功率熔断窗口：最近 tripWindow 次收尾（true=成功），
+	//         错误率 ≥ 80% 落 tripCooldown 长冷却（单次短冷却压不住的慢性错误）；
+	// failStreak —— 连败闸：连续失败 tripFailStreak 次同样落长冷却。
+	hist       map[string][]bool
+	failStreak map[string]int
+	// globalUntil 全局退避闸：撞 3012/405（IP 级风控）后所有号 fail-fast，
+	// 避免同 IP 其余号排队挨个撞墙（对齐 Rust 网关 is_global_risk 语义）。
+	globalUntil time.Time
+	// sticky 会话亲和：key（metadata.user_id）→ label。绑定号可用则固定
+	// 同号（上下文缓存命中率高），失效（冷却/删除）才轮转重绑。
+	sticky map[string]string
 }
+
+// 熔断参数（对齐 Rust：TRIP_WINDOW=10 / 80% / TRIP_COOLDOWN=10min / 连败 5）。
+const (
+	tripWindow      = 10
+	tripCooldown    = 10 * time.Minute
+	tripFailStreak  = 5
+)
 
 // poolFile token.json 的持久化形状。
 type poolFile struct {
@@ -39,7 +58,7 @@ type poolFile struct {
 // LoadPool 读 token.json；文件不存在返回空池（不报错）。
 // 兼容两种形状：新 {"accounts":[...]} 与旧 {"provider","token","saved_at"}。
 func LoadPool(path string) *Pool {
-	p := &Pool{cool: map[string]time.Time{}}
+	p := &Pool{cool: map[string]time.Time{}, hist: map[string][]bool{}, failStreak: map[string]int{}, sticky: map[string]string{}}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return p
@@ -110,12 +129,39 @@ func (p *Pool) Remove(label string) bool {
 	return false
 }
 
-// Pick 取下一个可用账号（轮转起点 + 跳过冷却）；全部冷却时返回 false。
+// SetGlobalBackoff 全局退避：duration 内 Pick 直接 fail-fast。
+func (p *Pool) SetGlobalBackoff(d time.Duration) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if d <= 0 {
+		return
+	}
+	until := time.Now().Add(d)
+	if until.After(p.globalUntil) {
+		p.globalUntil = until
+	}
+}
+
+// GlobalBackoffRemaining 全局退避剩余时长（0 = 无）。
+func (p *Pool) GlobalBackoffRemaining() time.Duration {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if d := time.Until(p.globalUntil); d > 0 {
+		return d
+	}
+	return 0
+}
+
+// Pick 取下一个可用账号（轮转起点 + 跳过冷却 + 全局退避闸）。
+// 返回 ok=false 的两种原因由 GlobalBackoffRemaining 区分。
 func (p *Pool) Pick() (Account, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if len(p.Accounts) == 0 {
 		return Account{}, false
+	}
+	if time.Now().Before(p.globalUntil) {
+		return Account{}, false // 全局风控闸：直接 fail-fast，不烧重试轮次
 	}
 	now := time.Now()
 	n := len(p.Accounts)
@@ -141,6 +187,70 @@ func (p *Pool) Pick() (Account, bool) {
 	return p.Accounts[best], true
 }
 
+// stickyLimit 绑定表上限：超过即整体清空（防长驻进程无限增长；
+// 重建代价只是各会话重新绑定一次）。
+const stickyLimit = 1024
+
+// PickSticky 会话亲和选号：key 为空退化为普通轮转。
+// 绑定命中（账号存在且不在冷却/退避）直接复用；否则轮转取号并重绑。
+func (p *Pool) PickSticky(key string) (Account, bool) {
+	if key == "" {
+		return p.Pick()
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.Accounts) == 0 {
+		return Account{}, false
+	}
+	if time.Now().Before(p.globalUntil) {
+		return Account{}, false
+	}
+	// 命中校验：绑定号仍存在且可用
+	if label, bad := p.sticky[key]; bad {
+		for _, a := range p.Accounts {
+			if a.Label != label {
+				continue
+			}
+			if until, cool := p.cool[a.Label]; cool && time.Now().Before(until) {
+				break // 绑定号在冷却，走轮转重绑
+			}
+			return a, true // 复用绑定号（cursor 不动）
+		}
+	}
+	// 轮转取号
+	now := time.Now()
+	n := len(p.Accounts)
+	for i := 0; i < n; i++ {
+		idx := (p.cursor + i) % n
+		a := p.Accounts[idx]
+		if until, cool := p.cool[a.Label]; cool && now.Before(until) {
+			continue
+		}
+		p.cursor = (idx + 1) % n
+		if len(p.sticky) >= stickyLimit {
+			p.sticky = map[string]string{}
+		}
+		p.sticky[key] = a.Label
+		return a, true
+	}
+	// 全冷却：取最早解冻的并绑定
+	best, bestUntil := 0, time.Time{}
+	for i, a := range p.Accounts {
+		if until, cool := p.cool[a.Label]; cool {
+			if bestUntil.IsZero() || until.Before(bestUntil) {
+				best, bestUntil = i, until
+			}
+		}
+	}
+	p.cursor = (best + 1) % n
+	a := p.Accounts[best]
+	if len(p.sticky) >= stickyLimit {
+		p.sticky = map[string]string{}
+	}
+	p.sticky[key] = a.Label
+	return a, true
+}
+
 // Cooldown 让某账号冷却一段时间。
 func (p *Pool) Cooldown(label string, d time.Duration) {
 	p.mu.Lock()
@@ -149,6 +259,50 @@ func (p *Pool) Cooldown(label string, d time.Duration) {
 		return
 	}
 	p.cool[label] = time.Now().Add(d)
+}
+
+// Settle 请求收尾记账：ok=false 时推进成功率窗口与连败计数，
+// 触发双闸任一即落 tripCooldown 长冷却并清连败（避免重复触发）。
+// 返回本次是否触发了熔断（调用方可用于日志）。
+func (p *Pool) Settle(label string, ok bool) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if ok {
+		delete(p.failStreak, label)
+		h := p.hist[label]
+		h = append(h, true)
+		if len(h) > tripWindow {
+			h = h[len(h)-tripWindow:]
+		}
+		p.hist[label] = h
+		return false
+	}
+	streak := p.failStreak[label] + 1
+	p.failStreak[label] = streak
+	h := append(p.hist[label], false)
+	if len(h) > tripWindow {
+		h = h[len(h)-tripWindow:]
+	}
+	p.hist[label] = h
+	rateBad := len(h) == tripWindow && countFalse(h)*5 >= tripWindow*4
+	streakBad := streak >= tripFailStreak
+	if rateBad || streakBad {
+		p.cool[label] = time.Now().Add(tripCooldown)
+		delete(p.failStreak, label) // 长冷却已生效，重新计连败
+		p.hist[label] = nil
+		return true
+	}
+	return false
+}
+
+func countFalse(h []bool) int {
+	n := 0
+	for _, v := range h {
+		if !v {
+			n++
+		}
+	}
+	return n
 }
 
 // CooldownRemaining 账号剩余冷却时长（0 = 不在冷却）。

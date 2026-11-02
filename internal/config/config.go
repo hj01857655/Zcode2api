@@ -21,6 +21,11 @@ type Config struct {
 	ModelAlias    map[string]string
 	APIKey        string // 本服务自身的入口 key，空 = 不鉴权
 	RequestLog    string
+	// TotalTimeoutSecs 单次上游请求（含响应体读取）的整体超时兜底；
+	// 0 = 关闭。对齐 zcode-switch 网关 total_timeout_secs。
+	TotalTimeoutSecs int `json:"total_timeout_secs"`
+	// KeepaliveSecs 流式空闲心跳间隔（SSE 注释帧）；0 = 关闭。
+	KeepaliveSecs int `json:"keepalive_secs"`
 	DumpDir       string // 上游请求/响应落盘目录，空 = 关闭
 	DumpMaxFiles  int
 }
@@ -36,11 +41,13 @@ func Default() *Config {
 		ModelAlias: map[string]string{
 			"glm-5.3-flash": "GLM-5.3-Flash",
 			"glm-5.3":       "GLM-5.3",
-			"glm-4.7":       "GLM-4.7",
 		},
 		RequestLog:   "request.log",
 		DumpDir:      "dumps",
 		DumpMaxFiles: 200,
+
+		TotalTimeoutSecs: 600, // 对齐 Rust 网关 total_timeout_secs 默认
+		KeepaliveSecs:    15,  // 对齐 Rust 网关 keepalive_secs 默认
 	}
 }
 

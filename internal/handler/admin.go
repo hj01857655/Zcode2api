@@ -35,15 +35,10 @@ func Overview(cfg *config.Config, client *zcode.Client) http.HandlerFunc {
 		} else {
 			cred["notice"] = "token 未加载 —— 设置 ZCODE_TOKEN、执行 login，或登录 ZCode CLI/GUI 后自动重读"
 		}
-		// 模型列表与 /v1/models 同源：alias 表映射去重
+		// 模型列表与 /v1/models 同源：用 cfg.Models（真实可用表）。
+		// 此前从 alias 表生成，残留了上游并不存在的 GLM-4.7 假项。
 		models := []map[string]any{}
-		seen := map[string]bool{}
-		for _, alias := range cfg.ModelAlias {
-			v := zcode.MapModel(alias)
-			if seen[v] {
-				continue
-			}
-			seen[v] = true
+		for _, v := range cfg.Models {
 			models = append(models, map[string]any{"id": v, "default": v == cfg.DefaultModel})
 		}
 		w.Header().Set("Content-Type", "application/json")

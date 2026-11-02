@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"zcode2api/internal/zcode"
 )
@@ -97,16 +98,17 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		model = m
 	}
 	if !clientStream {
-		s.aggregateMessages(w, model, body)
+		s.aggregateMessages(w, zcode.NewObs(s.Log, "anthropic", false, model, r.UserAgent()), model, body)
 		return
 	}
-	s.passthroughMessages(w, body)
+	s.passthroughMessages(w, zcode.NewObs(s.Log, "anthropic", true, model, r.UserAgent()), body)
 }
 
 // aggregateMessages 非流式：聚合上游 SSE → Anthropic message 形状。
-func (s *Server) aggregateMessages(w http.ResponseWriter, model string, body []byte) {
+func (s *Server) aggregateMessages(w http.ResponseWriter, obs *zcode.Obs, model string, body []byte) {
 	resp, err := s.upstreamMessages(body)
 	if err != nil {
+		obs.Done(502, upStatusOf(err), "error", 0, 0, 0, 0, err.Error())
 		if ue, ok := err.(*zcode.UpstreamError); ok {
 			s.mapUpstreamError(w, ue.Status, ue.Body)
 			return
@@ -115,10 +117,11 @@ func (s *Server) aggregateMessages(w http.ResponseWriter, model string, body []b
 		return
 	}
 	defer resp.Body.Close()
+	obs.UpStatus = resp.StatusCode
 
 	var content []map[string]any
 	var text, thinking, stop string
-	var in, out int
+	var in, out, tcr, tcw int
 	acc := newToolAccum()
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 64*1024), 8*1024*1024)
@@ -132,14 +135,24 @@ func (s *Server) aggregateMessages(w http.ResponseWriter, model string, body []b
 			continue
 		}
 		if d.ErrText != "" {
+			obs.Done(502, resp.StatusCode, "error", int64(in), int64(out), int64(tcr), int64(tcw), d.ErrText)
 			errJSON(w, http.StatusBadGateway, "upstream: "+d.ErrText, "zcode2api_error")
 			return
+		}
+		if d.Content != "" || d.Reason != "" || d.ToolArgs != "" {
+			obs.FirstByte()
 		}
 		if d.UsageIn != nil {
 			in = int(*d.UsageIn)
 		}
 		if d.UsageOut != nil {
 			out = int(*d.UsageOut)
+		}
+		if d.CacheRead != nil {
+			tcr = int(*d.CacheRead)
+		}
+		if d.CacheCreation != nil {
+			tcw = int(*d.CacheCreation)
 		}
 		acc.add(d)
 		thinking += d.Reason
@@ -182,12 +195,14 @@ func (s *Server) aggregateMessages(w http.ResponseWriter, model string, body []b
 		"model": model, "content": content, "stop_reason": stop, "stop_sequence": nil,
 		"usage": map[string]any{"input_tokens": in, "output_tokens": out},
 	})
+	obs.Done(200, resp.StatusCode, stop, int64(in), int64(out), int64(tcr), int64(tcw), "")
 }
 
 // passthroughMessages 流式：原样透传上游 SSE 字节流。
-func (s *Server) passthroughMessages(w http.ResponseWriter, body []byte) {
+func (s *Server) passthroughMessages(w http.ResponseWriter, obs *zcode.Obs, body []byte) {
 	resp, err := s.upstreamMessages(body)
 	if err != nil {
+		obs.Done(502, upStatusOf(err), "error", 0, 0, 0, 0, err.Error())
 		if ue, ok := err.(*zcode.UpstreamError); ok {
 			s.mapUpstreamError(w, ue.Status, ue.Body)
 			return
@@ -196,6 +211,7 @@ func (s *Server) passthroughMessages(w http.ResponseWriter, body []byte) {
 		return
 	}
 	defer resp.Body.Close()
+	obs.UpStatus = resp.StatusCode
 	ct := resp.Header.Get("Content-Type")
 	if ct == "" {
 		ct = "text/event-stream"
@@ -203,19 +219,23 @@ func (s *Server) passthroughMessages(w http.ResponseWriter, body []byte) {
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(resp.StatusCode)
+	lk := newSSELock(w)
+	stopKA := startKeepalive(lk, time.Duration(s.Cfg.KeepaliveSecs)*time.Second)
+	defer stopKA()
 	flusher, _ := w.(http.Flusher)
+	_ = flusher
 	buf := make([]byte, 16*1024)
 	for {
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
-			if _, werr := w.Write(buf[:n]); werr != nil {
+			obs.FirstByte() // 透传流无解析：首字节近似 TTFT；usage/finish 不可得记 0
+			if _, werr := lk.Write(buf[:n]); werr != nil {
+				obs.Done(200, resp.StatusCode, "", 0, 0, 0, 0, "client write: "+werr.Error())
 				return
-			}
-			if flusher != nil {
-				flusher.Flush()
 			}
 		}
 		if err != nil {
+			obs.Done(200, resp.StatusCode, "", 0, 0, 0, 0, "")
 			return
 		}
 	}

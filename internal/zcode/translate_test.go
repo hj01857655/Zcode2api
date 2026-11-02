@@ -179,15 +179,14 @@ func TestMapModel(t *testing.T) {
 	for in, want := range map[string]string{
 		"glm-5.3-flash": "GLM-5.3-Flash",
 		"glm-5.3":       "GLM-5.3",
-		"glm-4.7":       "GLM-4.7",
 		"GLM-5.3-Flash": "GLM-5.3-Flash",
 	} {
 		if got := MapModel(in); got != want {
 			t.Fatalf("MapModel(%q)=%q, want %q", in, got, want)
 		}
 	}
-	// 表外一律回落 GLM-5.3-Flash
-	for _, in := range []string{"gpt-4o", "", "unknown"} {
+	// 表外一律回落 GLM-5.3-Flash（glm-4.7 已删：上游无此模型，admin 页曾误展示）
+	for _, in := range []string{"gpt-4o", "", "unknown", "glm-4.7"} {
 		if got := MapModel(in); got != "GLM-5.3-Flash" {
 			t.Fatalf("MapModel(%q)=%q, want GLM-5.3-Flash", in, got)
 		}
