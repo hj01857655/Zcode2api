@@ -7,7 +7,6 @@ package zcode
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -82,25 +81,8 @@ func StableDeviceMid(dir, jwt string) string {
 
 // jwtUserID 从 JWT payload 里解 user_id（解不出返回空串——事件上报可跳过）。
 func jwtUserID(jwt string) string {
-	parts := strings.Split(jwt, ".")
-	if len(parts) < 2 {
-		return ""
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return ""
-	}
-	var payload struct {
-		UserID string `json:"user_id"`
-		Sub    string `json:"sub"`
-	}
-	if json.Unmarshal(raw, &payload) != nil {
-		return ""
-	}
-	if payload.UserID != "" {
-		return payload.UserID
-	}
-	return payload.Sub
+	uid, _ := jwtIdentity(jwt)
+	return uid
 }
 
 // claimHeaders 领取三端点共用的头组（脚本验证过的形状）。
@@ -349,26 +331,45 @@ func ClaimBestForToken(client *http.Client, jwt, deviceMid string) (string, []Pl
 		}
 	}
 	body := map[string]string{"plan_id": best.PlanID}
-	payload, err := claimPost(client, ClaimPath, jwt, deviceMid, body, param, captcha.Region)
-	if err != nil {
-		return "claim 请求失败: " + err.Error(), plans
-	}
+	// 提交循环（对齐今天实测的领取链行为）：
+	//   429 —— 限流是出口 IP 级（连领 4 个后第 5 个必撞），指数退避 60s/120s 重试两轮；
+	//          验证码 param 一次性，每轮重试前重新求解；
+	//   3012 —— unusual activity 风控标记期小时级，CLI 等不起，不自动重试，直接失败说明；
+	//   3007 —— 验证码未通过：现场重新求解再发一次（param 一次性）。
+	var payload map[string]any
 	code := 0
-	if c, ok := payload["code"].(float64); ok {
-		code = int(c)
-	}
-	// 3007 = 验证码未通过：现场重新求解（param 一次性，每次 claim 必须重新求）。
-	if code == 3007 {
-		if p2, serr := SolveCaptcha(captcha.SceneID, captcha.Prefix, captcha.Region); serr == nil {
-			if resp2, err2 := claimPost(client, ClaimPath, jwt, deviceMid, body, p2, captcha.Region); err2 == nil {
-				payload, code = resp2, 0
-				if cv, ok := resp2["code"].(float64); ok {
-					code = int(cv)
+	solved3007 := false
+	for attempt := 0; ; attempt++ {
+		payload, err = claimPost(client, ClaimPath, jwt, deviceMid, body, param, captcha.Region)
+		if err != nil {
+			return "claim 请求失败: " + err.Error(), plans
+		}
+		code = 0
+		if c, ok := payload["code"].(float64); ok {
+			code = int(c)
+		}
+		switch {
+		case code == 0:
+		case code == 3007 && !solved3007:
+			solved3007 = true
+			p, serr := SolveCaptcha(captcha.SceneID, captcha.Prefix, captcha.Region)
+			if serr != nil {
+				return "领取需要验证码，求解失败: " + errTextOr(serr.Error()), plans
+			}
+			param = p
+			continue
+		case code == 429 && attempt < 2:
+			time.Sleep(time.Duration(60*(attempt+1)) * time.Second)
+			if captcha.Enabled && captcha.SceneID != "" {
+				if p, serr := SolveCaptcha(captcha.SceneID, captcha.Prefix, captcha.Region); serr == nil {
+					param = p
 				}
 			}
-		} else {
-			return "领取需要验证码，求解失败: " + serr.Error(), plans
+			continue
+		case code == 3012:
+			return "领取被风控拦截（3012 unusual activity）：该出口 IP 已被标记，请挂代理或等待标记期过后再试", plans
 		}
+		break
 	}
 	switch {
 	case code == 0:
@@ -382,4 +383,11 @@ func ClaimBestForToken(client *http.Client, jwt, deviceMid string) (string, []Pl
 		msg, _ := payload["message"].(string)
 		return fmt.Sprintf("领取未成功: code=%d %s", code, msg), plans
 	}
+}
+
+func errTextOr(s string) string {
+	if s == "" {
+		return "未知错误"
+	}
+	return s
 }
