@@ -132,3 +132,110 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+// 全局退避：SetGlobalBackoff 后 Pick fail-fast，剩余时长递减，过期自动解除
+func TestPoolGlobalBackoff(t *testing.T) {
+	pool := LoadPool(filepath.Join(t.TempDir(), "none.json"))
+	pool.Upsert(Account{Label: "a", Token: "t1"})
+	pool.SetGlobalBackoff(time.Minute)
+	if _, ok := pool.Pick(); ok {
+		t.Fatal("全局退避期内 Pick 应 fail-fast")
+	}
+	if pool.GlobalBackoffRemaining() <= 0 {
+		t.Fatal("退避剩余应为正")
+	}
+	// 过期解除：手动把 globalUntil 拨到过去
+	pool.mu.Lock()
+	pool.globalUntil = time.Now().Add(-time.Second)
+	pool.mu.Unlock()
+	if _, ok := pool.Pick(); !ok {
+		t.Fatal("退避过期后 Pick 应恢复")
+	}
+	if pool.GlobalBackoffRemaining() != 0 {
+		t.Fatal("过期后退避剩余应为 0")
+	}
+	// SetGlobalBackoff(0/负) 不生效
+	pool.SetGlobalBackoff(0)
+	if pool.GlobalBackoffRemaining() < 0 {
+		t.Fatal("SetGlobalBackoff(0) 不应产生负退避")
+	}
+}
+
+// 熔断双闸：连败 5 次触发长冷却（Settle 返回 true）+ 成功重置；成功率窗口 80% 触发
+func TestPoolSettleTripBreaker(t *testing.T) {
+	pool := LoadPool(filepath.Join(t.TempDir(), "none.json"))
+	pool.Upsert(Account{Label: "a", Token: "t1"})
+	// 连败闸：5 连败第 5 次返回 true（触发熔断）
+	tripped := false
+	for i := 1; i <= tripFailStreak; i++ {
+		if pool.Settle("a", false) {
+			tripped = true
+			if i != tripFailStreak {
+				t.Fatalf("连败 %d 次不应提前触发", i)
+			}
+		}
+	}
+	if !tripped {
+		t.Fatal("5 连败应触发熔断")
+	}
+	if d := pool.CooldownRemaining("a"); d <= 0 {
+		t.Fatal("熔断后应有长冷却")
+	}
+	// 成功重置连败：恢复后 1 次成功清 streak，后续 4 次失败不再触发
+	pool.mu.Lock()
+	delete(pool.cool, "a") // 解除冷却便于后续断言
+	pool.mu.Unlock()
+	pool.Settle("a", true)
+	for i := 0; i < tripFailStreak-1; i++ {
+		if pool.Settle("a", false) {
+			t.Fatalf("成功重置后 %d 连败不应触发", i+1)
+		}
+	}
+}
+
+// 成功率熔断：窗口 10 次内错误率 ≥80% 触发（与连败闸独立路径）。
+// 序列约束：8 败 2 成、最大连败 3（<5 不触发连败闸），第 10 次时窗口恰为 80%。
+func TestPoolSettleRateTrip(t *testing.T) {
+	pool := LoadPool(filepath.Join(t.TempDir(), "none.json"))
+	pool.Upsert(Account{Label: "a", Token: "t1"})
+	seq := []bool{false, false, true, false, false, false, true, false, false, false}
+	for i, ok := range seq {
+		if pool.Settle("a", ok) {
+			if i != len(seq)-1 {
+				t.Fatalf("第 %d 次不应提前触发", i+1)
+			}
+			return
+		}
+	}
+	t.Fatal("窗口错误率 80% 应触发熔断")
+}
+
+// sticky 会话亲和：同 key 固定同号；绑定号冷却后重绑；空 key 退化轮转；全局退避 fail-fast
+func TestPoolPickSticky(t *testing.T) {
+	pool := LoadPool(filepath.Join(t.TempDir(), "none.json"))
+	pool.Upsert(Account{Label: "a", Token: "t1"})
+	pool.Upsert(Account{Label: "b", Token: "t2"})
+	// 同 key 固定同号
+	a1, _ := pool.PickSticky("sess-1")
+	a2, _ := pool.PickSticky("sess-1")
+	if a1.Label != a2.Label {
+		t.Fatalf("同 key 应固定同号: %s vs %s", a1.Label, a2.Label)
+	}
+	// 不同 key 各自绑定（两 key 可能撞同号，但绑定表应记录两条）
+	pool.PickSticky("sess-2")
+	// 绑定号冷却 → 重绑到另一个号
+	pool.Cooldown(a1.Label, time.Minute)
+	a3, ok := pool.PickSticky("sess-1")
+	if !ok || a3.Label == a1.Label {
+		t.Fatalf("绑定号冷却后应重绑到可用号, got %s", a3.Label)
+	}
+	// 空 key 退化普通轮转（不 panic、有号）
+	if _, ok := pool.PickSticky(""); !ok {
+		t.Fatal("空 key 应退化轮转")
+	}
+	// 全局退避：fail-fast
+	pool.SetGlobalBackoff(time.Minute)
+	if _, ok := pool.PickSticky("sess-3"); ok {
+		t.Fatal("全局退避期内 PickSticky 应 fail-fast")
+	}
+}
