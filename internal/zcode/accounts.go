@@ -1,4 +1,4 @@
-// zcode-switch 账号池读取与余额查询（~/.zcode-switch/accounts/*.json）。
+// zcode-hub 账号池读取与余额查询（~/.zcode-hub/accounts/*.json）。
 // 文件形如 {name, hash, virtual_device_mid, credentials:{...}}，credentials 值多为
 // enc:v1 密文，密钥派生与 ~/.zcode/v2/credentials.json 同一套（credentialsKey，见 auth.go）。
 // 密文只在本机内存中解；JWT 永不写盘、不打日志、不进任何返回值。
@@ -19,7 +19,9 @@ import (
 	"time"
 )
 
-// AccountsDir 账号目录：env ZCODE_ACCOUNTS_DIR 可覆盖，默认 ~/.zcode-switch/accounts。
+// AccountsDir 账号目录：env ZCODE_ACCOUNTS_DIR 可覆盖。默认读 ~/.zcode-hub/accounts，
+// 项目更名迁移兼容：新目录不存在且旧 ~/.zcode-switch/accounts 存在时回落旧目录，
+// 两个来源都读（同名文件以新目录为准），避免迁移过渡期漏号。
 func AccountsDir() string {
 	if d := strings.TrimSpace(os.Getenv("ZCODE_ACCOUNTS_DIR")); d != "" {
 		return d
@@ -28,7 +30,19 @@ func AccountsDir() string {
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".zcode-switch", "accounts")
+	return filepath.Join(home, ".zcode-hub", "accounts")
+}
+
+// accountDirs 返回按优先级排列的候选账号目录：新目录（迁移目标）优先，旧目录兜底。
+func accountDirs() []string {
+	dirs := []string{AccountsDir()}
+	if strings.Contains(AccountsDir(), ".zcode-hub") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			dirs = append(dirs, filepath.Join(home, ".zcode-switch", "accounts"))
+		}
+	}
+	return dirs
 }
 
 // SwitchAccount 单个 zcode-switch 账号的运行态身份。
@@ -48,36 +62,56 @@ type SwitchAccount struct {
 // LoadAccounts 读取并解密账号目录；only 非空时按文件名子串过滤
 // （claim_check.js 的 ZCODE_ONLY 同语义）。
 func LoadAccounts(dir string, only []string) []SwitchAccount {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return []SwitchAccount{{Name: "(目录不可读)", Err: err.Error()}}
+	// 迁移兼容：dir 为空时用 accountDirs 双读（新目录优先，旧目录兜底，同名以新为准）
+	if strings.TrimSpace(dir) == "" {
+		return loadAccountsFrom(accountDirs(), only)
 	}
-	names := []string{}
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
-			names = append(names, e.Name())
+	return loadAccountsFrom([]string{dir}, only)
+}
+
+func loadAccountsFrom(dirs []string, only []string) []SwitchAccount {
+	seen := map[string]bool{} // 文件名（短 ID）→ 已读
+	out := []SwitchAccount{}
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue // 目录不存在（旧目录已迁移/新目录首装）→ 跳过
+		}
+		names := []string{}
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") && !seen[e.Name()] {
+				seen[e.Name()] = true
+				names = append(names, e.Name())
+			}
+		}
+		sort.Strings(names)
+		out = append(out, loadAccountNames(dir, names, only)...)
+	}
+	return out
+}
+
+func loadAccountNames(dir string, names []string, only []string) []SwitchAccount {
+	onlySet := map[string]bool{}
+	for _, o := range only {
+		onlySet[o] = true
+	}
+	want := names
+	if len(only) > 0 {
+		want = nil
+		for _, n := range names {
+			stem := strings.TrimSuffix(n, ".json")
+			if onlySet[n] || onlySet[stem] || onlySet[stem[:min(8, len(stem))]] {
+				want = append(want, n)
+			}
 		}
 	}
-	sort.Strings(names)
 
 	key, kerr := credentialsKey()
 	if kerr != nil {
 		return []SwitchAccount{{Name: "(密钥派生失败)", Err: kerr.Error()}}
-}
-		accs := []SwitchAccount{}
-	for _, name := range names {
-		if len(only) > 0 {
-			hit := false
-			for _, o := range only {
-				if strings.Contains(name, o) {
-					hit = true
-					break
-				}
-			}
-			if !hit {
-				continue
-			}
-		}
+	}
+	accs := []SwitchAccount{}
+	for _, name := range want {
 		accs = append(accs, loadAccount(filepath.Join(dir, name), key))
 	}
 	return accs
@@ -291,4 +325,11 @@ func FetchBalance(client *http.Client, acc SwitchAccount) (AccountBalance, error
 		})
 	}
 	return out, nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
