@@ -53,6 +53,9 @@ func Overview(cfg *config.Config, client *zcode.Client, stats StatsFn) http.Hand
 			"models":     models,
 			"local_auth": cfg.APIKey != "" || cfg.AdminPassword != "",
 			"admin_auth": cfg.AdminPassword != "",
+			// 接入 Key（面板「网关接入」卡与 curl 示例用）：对话入口 key 与管理员密码
+			// 是两回事，必须单独回显，否则登录后接入卡显示不了 key
+			"apiKey": cfg.APIKey,
 			"stats":      stats(),
 		})
 	}

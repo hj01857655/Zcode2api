@@ -324,6 +324,7 @@ function renderMain(o,h){
   paintAcc();
   $("#vPool").innerHTML=poolHtml;
   window._models=(o.models||[]).map(m=>m.id);
+  window._accApiKey=o.api_key||o.apiKey||""; // 接入 Key：overview 回显，与管理员密码解耦
   if(!localStorage.getItem("gta_model_default")&&o.models&&o.models.length){
     const d=o.models.find(m=>m.default)||o.models[0];if(d)localStorage.setItem("gta_model_default",d.id)}
 }
@@ -334,7 +335,7 @@ function _accModel(){const m=localStorage.getItem("gta_model_default");if(m)retu
   return (window._models&&window._models[0])||"GLM-5.3-Flash"}
 function _accBase(){return _accProto==="anthropic"?location.origin:location.origin+"/v1"}
 function _accEndpoint(){return _accProto==="anthropic"?"/v1/messages":(_accProto==="responses"?"/v1/responses":"/v1/chat/completions")}
-function _accKeyText(){const k=localStorage.zc_apikey||"";
+function _accKeyText(){const k=(window._accApiKey)!==undefined?window._accApiKey:(localStorage.zc_admin_pass||"");
   if(!k)return"（登录后此处显示接入 Key）";
   return _accKeyOpen?k:(k.length>12?k.slice(0,8)+"…"+k.slice(-4):"•".repeat(k.length))}
 function accCardHtml(){
@@ -358,7 +359,7 @@ function accCardHtml(){
  </div>`}
 function accExample(){
  const base=_accBase(),ep=location.origin+_accEndpoint();
- const key=localStorage.zc_apikey||"sk-your-gateway-key",m=_accModel();
+ const key=(window._accApiKey!==undefined&&window._accApiKey)?window._accApiKey:(localStorage.zc_admin_pass||"sk-your-gateway-key"),m=_accModel();
  if(_accProto==="anthropic")return`# Python（anthropic SDK）
 import anthropic
 
