@@ -51,7 +51,8 @@ func Overview(cfg *config.Config, client *zcode.Client, stats StatsFn) http.Hand
 			"service":    "ZCode2api-go",
 			"credential": cred,
 			"models":     models,
-			"local_auth": cfg.APIKey != "",
+			"local_auth": cfg.APIKey != "" || cfg.AdminPassword != "",
+			"admin_auth": cfg.AdminPassword != "",
 			"stats":      stats(),
 		})
 	}

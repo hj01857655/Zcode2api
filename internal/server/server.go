@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -43,7 +44,7 @@ func New(cfg *config.Config, client *zcode.Client) *Server {
 	}
 	return &Server{
 		Cfg: cfg, Client: client, Prefix: zcode.SystemPrefix(),
-		Log: zcode.NewLogSink(cfg.RequestLog),
+		Log: zcode.NewLogSink(cfg.RequestLog, int64(cfg.RequestLogRotateMB)),
 	}
 }
 
@@ -213,9 +214,12 @@ func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	// auto_claim 开关与 main.go 定时器同源读取（ZCODE_AUTO_CLAIM=0 关闭）：
+	// 概览页「下次自动领取」配一个开关状态，免得关了还盯空时间
 	body := map[string]any{"usage_window": usageWindow(time.Now()),
-		"next_claim": nextClaimTime(time.Now()).Format("01-02 15:04"),
-		"upstream":   s.Cfg.Upstream, "version": "2.1.0"}
+		"next_claim":  nextClaimTime(time.Now()).Format("01-02 15:04"),
+		"auto_claim":  os.Getenv("ZCODE_AUTO_CLAIM") != "0",
+		"upstream":    s.Cfg.Upstream, "version": "2.1.0"}
 	if s.Client.Pool != nil {
 		n := s.Client.Pool.Size()
 		body["ok"] = n > 0

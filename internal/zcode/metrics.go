@@ -59,18 +59,21 @@ type RequestLog struct {
 }
 
 // LogSink 请求日志汇：内存环形缓冲（admin 页读）+ JSONL 追加落盘。
+// 落盘按大小轮转（RotateMB，0 = 关闭）：超限改名 .1（单代，覆盖旧 .1），
+// 对齐 zcode-switch 网关 log_file_max_mb 行为，防长期运行日志无限膨胀。
 type LogSink struct {
-	mu   sync.Mutex
-	path string // 空 = 不落盘
-	ring []RequestLog
+	mu        sync.Mutex
+	path      string // 空 = 不落盘
+	ring      []RequestLog
+	RotateMB  int64
 }
 
-// NewLogSink path 为空则只进内存环形缓冲。
-func NewLogSink(path string) *LogSink {
+// NewLogSink path 为空则只进内存环形缓冲；rotateMB>0 时落盘按大小轮转。
+func NewLogSink(path string, rotateMB int64) *LogSink {
 	if path != "" {
 		_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	}
-	return &LogSink{path: path, ring: make([]RequestLog, 0, 256)}
+	return &LogSink{path: path, ring: make([]RequestLog, 0, 256), RotateMB: rotateMB}
 }
 
 // Record 写一条日志：追加 JSONL + 内存 ring（保留最近 512 条）。
@@ -86,6 +89,12 @@ func (s *LogSink) Record(l RequestLog) {
 	}
 	if s.path == "" {
 		return
+	}
+	// 轮转：写入前检查（低频检查足够，日志行 KB 级）；超限 → path.1 覆盖旧代
+	if s.RotateMB > 0 {
+		if st, err := os.Stat(s.path); err == nil && st.Size() >= s.RotateMB<<20 {
+			_ = os.Rename(s.path, s.path+".1")
+		}
 	}
 	b, err := json.Marshal(l)
 	if err != nil {

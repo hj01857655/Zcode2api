@@ -159,7 +159,8 @@ pre.acc-pre{white-space:pre-wrap;word-break:break-all;font:12px var(--mono);back
 <script>
 "use strict";
 const $=s=>document.querySelector(s);
-function authHeaders(){const k=localStorage.zc_apikey;if(!k)return{};return{"Authorization":"Bearer "+k}}
+(function(){const o=localStorage.zc_apikey;if(o&&!localStorage.zc_admin_pass){localStorage.zc_admin_pass=o;localStorage.removeItem("zc_apikey")}})();
+function authHeaders(){const k=localStorage.zc_admin_pass;if(!k)return{};return{"Authorization":"Bearer "+k}}
 async function api(p,opt){const r=await fetch(p,Object.assign({headers:authHeaders()},opt||{}));try{return await r.json()}catch(e){return{error:String(e)}}}
 function esc(s){const d=document.createElement("div");d.textContent=s==null?"":String(s);return d.innerHTML}
 // toast 对齐 hub ui-bus：kind 着色 + 长 detail 收起可点展开 + 3.2/5.2s
@@ -240,8 +241,8 @@ function showView(btn){
   if(id==="vDiag")loadDiag();
   if(id==="vLog")loadLogs();
 }
-function saveKey(){localStorage.zc_apikey=document.getElementById("k").value.trim();toast("已保存");loadAll()}
-function logout(){localStorage.removeItem("zc_apikey");location.reload()}
+function saveKey(){localStorage.zc_admin_pass=document.getElementById("k").value.trim();toast("已保存");loadAll()}
+function logout(){localStorage.removeItem("zc_admin_pass");localStorage.removeItem("zc_apikey");location.reload()}
 function showLogin(err){
   $("#login").style.display="flex";
   $("#lerr").textContent=err||"";document.getElementById("lk").value="";
@@ -249,7 +250,7 @@ function showLogin(err){
 function doLogin(){
   const v=document.getElementById("lk").value.trim();
   if(!v){$("#lerr").textContent="请输入管理员密码";return}
-  localStorage.zc_apikey=v;$("#lerr").textContent="";
+  localStorage.zc_admin_pass=v;$("#lerr").textContent="";
   $("#login").style.display="none";
   loadAll()}
 function setDot(cls,txt){$("#dot").className="status-dot "+cls;$("#dotTxt").textContent=txt}
@@ -270,7 +271,7 @@ async function loadAll(){
   const [o,h]=await Promise.all([api("/admin/api/overview"),fetch("/health",{headers:authHeaders()}).then(r=>r.json()).catch(()=>null)]);
   if(!o.credential){
     const err=o.error,msg=typeof err==="object"?(err&&err.message||JSON.stringify(err)):String(err||"");
-    if(/invalid api key/i.test(msg)||!localStorage.zc_apikey){setDot("off","未登录");showLogin(localStorage.zc_apikey?"密码无效，请重新登录":"");return}
+    if(/invalid api key|invalid admin password/i.test(msg)||!localStorage.zc_admin_pass){setDot("off","未登录");showLogin(localStorage.zc_admin_pass?"密码无效，请重新登录":"");return}
     setDot("run","网关异常");
     $("#vMain").innerHTML='<div class="card bad">overview 加载失败'+(msg?" — "+esc(msg):"")+"</div>";return}
   const c=o.credential;
@@ -286,14 +287,14 @@ function renderMain(o,h){
   const winTxt=uw.active?`<span class="ok">进行中 · 剩 ${uw.remaining_min} 分</span>`:`<span class="dim">未开始（${esc(uw.starts_at||"—")} 起）</span>`;
   let html=accCardHtml()+`<div class="card"><div class="stats">
     <div class="stat"><div class="k">使用窗口（23:00–09:00）</div><div class="v">${winTxt}</div></div>
-    <div class="stat"><div class="k">下次自动领取</div><div class="v">${esc((h&&h.next_claim)||"—")}</div></div>
+    <div class="stat"><div class="k">下次自动领取</div><div class="v">${(h&&h.auto_claim===false)?`<span class="dim">已关闭</span>`:esc((h&&h.next_claim)||"—")}</div></div>
     <div class="stat"><div class="k">请求总数</div><div class="v">${st.total!=null?st.total:"—"}</div></div>
     <div class="stat"><div class="k">失败请求</div><div class="v ${st.fail>0?"bad":"ok"}">${st.fail!=null?st.fail:"—"}${st.total?` <span class="dim" style="font-size:11px">成功 ${st.ok}</span>`:""}</div></div>
   </div></div>`;
   html+=`<div class="card"><h3>凭据</h3><div class="kv">
     <b>状态</b><span class="${c.valid?"ok":"bad"}">${c.valid?"有效":"无效"}${c.notice?" — "+esc(c.notice):""}</span>
     <b>模式</b><span>${esc(c.mode||"—")}${c.token_chars!=null?` <span class="dim mono">token ${c.token_chars} 字符</span>`:""}</span>
-    <b>本地鉴权</b><span>${o.local_auth?`<span class="badge on">API_KEY 已开启</span> <input id="k" placeholder="API Key" value="${esc(localStorage.zc_apikey||"")}"> <button class="ghost" onclick="saveKey()">保存</button> <button class="ghost" onclick="logout()">退出登录</button>`:'<span class="badge off">未开启（仅回环）</span>'}</span>
+    <b>本地鉴权</b><span>${o.local_auth?`<span class="badge on">管理员密码已开启</span> <input id="k" type="password" placeholder="管理员密码" value="${esc(localStorage.zc_admin_pass||"")}"> <button class="ghost" onclick="saveKey()">保存</button> <button class="ghost" onclick="logout()">退出登录</button>`:`<span class="badge ${o.credential&&o.credential.mode!=="none"?"warn":"off"}">${o.credential&&o.credential.admin_auth?"密码未设置（仅回环）":"未开启（仅回环）"}</span>`}</span>
   </div></div>`;
   let poolHtml='<div class="card bad">当前不是账号池模式（单 token 或无凭据）</div>';
   if(c.mode==="pool"){

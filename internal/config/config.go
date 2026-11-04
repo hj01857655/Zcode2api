@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -23,6 +24,8 @@ type Config struct {
 	// AdminPassword 管理面板（/admin）登录密码：与 API_KEY 独立——面板凭据不复用
 	// 供模型调用的 key，避免把对话密钥抄进浏览器 localStorage。空 = 不鉴权（本机自用）。
 	AdminPassword string `json:"admin_password"`
+	// RequestLogRotateMB request.log 轮转上限（MB）：超限改名 .1（单代）。0 = 关闭。
+	RequestLogRotateMB int `json:"request_log_rotate_mb"`
 	RequestLog    string
 	// TotalTimeoutSecs 单次上游请求（含响应体读取）的整体超时兜底；
 	// 0 = 关闭。对齐 zcode-switch 网关 total_timeout_secs。
@@ -46,6 +49,8 @@ func Default() *Config {
 			"glm-5.3":       "GLM-5.3",
 		},
 		RequestLog:   "request.log",
+		// 日志轮转默认 64MB：长期运行防膨胀，单代 .1 备份（对齐 hub log_file_max_mb=16 的同类兜底）
+		RequestLogRotateMB: 64,
 		DumpDir:      "dumps",
 		DumpMaxFiles: 200,
 
@@ -107,6 +112,11 @@ func Load() (*Config, error) {
 
 	setdefault(&cfg.APIKey, "API_KEY", "")
 	setdefault(&cfg.AdminPassword, "ADMIN_PASSWORD", cfg.AdminPassword)
+	if v := os.Getenv("REQUEST_LOG_ROTATE_MB"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			cfg.RequestLogRotateMB = n
+		}
+	}
 	setdefault(&cfg.TokenSource, "ZCODE_TOKEN", cfg.TokenSource)
 	setdefault(&cfg.DumpDir, "DUMP_DIR", cfg.DumpDir)
 	if v := os.Getenv("DUMP"); v == "0" {
