@@ -6,14 +6,19 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 
 	"zcode2api/internal/config"
 	"zcode2api/internal/zcode"
 )
 
+// StatsFn 请求计数快照函数（server 侧注入，面板概览展示）。
+type StatsFn func() map[string]int64
+
 // Overview 构造 GET /admin/api/overview。
-func Overview(cfg *config.Config, client *zcode.Client) http.HandlerFunc {
+func Overview(cfg *config.Config, client *zcode.Client, stats StatsFn) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !authed(w, r, cfg.APIKey) {
 			return
@@ -47,7 +52,85 @@ func Overview(cfg *config.Config, client *zcode.Client) http.HandlerFunc {
 			"credential": cred,
 			"models":     models,
 			"local_auth": cfg.APIKey != "",
+			"stats":      stats(),
 		})
+	}
+}
+
+// collectClaims 池（或单账号）的 label->jwt 收集；only 非空只留该号。
+func collectClaims(client *zcode.Client, only string) map[string]string {
+	claims := map[string]string{}
+	if client.Pool != nil {
+		for _, acc := range client.Pool.Accounts {
+			if acc.Token != "" && (only == "" || acc.Label == only) {
+				claims[acc.Label] = acc.Token
+			}
+		}
+	} else if client.Token != "" && only == "" {
+		claims["default"] = client.Token
+	}
+	return claims
+}
+
+// sortedLabels 收集后排序，输出稳定。
+func sortedLabels(claims map[string]string) []string {
+	labels := make([]string, 0, len(claims))
+	for label := range claims {
+		labels = append(labels, label)
+	}
+	sort.Strings(labels)
+	return labels
+}
+
+// BalanceHandler 构造 GET /admin/api/balance：账号池逐账号查 billing/balance
+// （与 claim 同一套头组与 device_mid 状态目录），面板行内"余额"按钮的数据源。
+func BalanceHandler(cfg *config.Config, client *zcode.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !authed(w, r, cfg.APIKey) {
+			return
+		}
+		claims := collectClaims(client, r.URL.Query().Get("account"))
+		labels := sortedLabels(claims)
+		stateDir := claimStateDir()
+		out := make([]zcode.AccountBalance, 0, len(labels))
+		for _, label := range labels {
+			jwt := claims[label]
+			acc := zcode.SwitchAccount{Name: label, File: label, JWT: jwt,
+				DeviceMid: zcode.StableDeviceMid(stateDir, jwt)}
+			b, err := zcode.FetchBalance(claimHTTP, acc)
+			if err != nil {
+				out = append(out, zcode.AccountBalance{Account: label, File: label, Err: err.Error()})
+				continue
+			}
+			out = append(out, b)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"results": out})
+	}
+}
+
+// TouchHandler 构造 GET /admin/api/touch?account=label：逐账号查 touch.query
+// 投放清单（可领信号的前置数据源，与 ClaimBestForToken 主路径同源）。
+func TouchHandler(cfg *config.Config, client *zcode.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !authed(w, r, cfg.APIKey) {
+			return
+		}
+		claims := collectClaims(client, r.URL.Query().Get("account"))
+		labels := sortedLabels(claims)
+		stateDir := claimStateDir()
+		out := make([]map[string]any, 0, len(labels))
+		for _, label := range labels {
+			jwt := claims[label]
+			dels, err := zcode.TouchPlans(claimHTTP, jwt, zcode.StableDeviceMid(stateDir, jwt))
+			if err != nil {
+				out = append(out, map[string]any{"account": label, "err": err.Error()})
+				continue
+			}
+			out = append(out, map[string]any{"account": label, "deliveries": dels})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"results": out})
 	}
 }
 
@@ -72,4 +155,22 @@ func authed(w http.ResponseWriter, r *http.Request, key string) bool {
 		"error": map[string]any{"message": "invalid api key for this gateway", "type": "invalid_request_error"},
 	})
 	return false
+}
+
+// LogsHandler 构造 GET /admin/api/logs?n=200：请求日志（内存环最近 N 条，新的在前）。
+// 面板「请求日志」页数据源——此前日志只落 request.log，admin 面板看不到。
+func LogsHandler(cfg *config.Config, recent func(n int) []zcode.RequestLog) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !authed(w, r, cfg.APIKey) {
+			return
+		}
+		n := 200
+		if v := r.URL.Query().Get("n"); v != "" {
+			if p, err := strconv.Atoi(v); err == nil && p > 0 && p <= 512 {
+				n = p
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"logs": recent(n)})
+	}
 }

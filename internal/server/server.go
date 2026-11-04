@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"zcode2api/internal/config"
@@ -30,6 +31,9 @@ type Server struct {
 	// TokenLoader 401 时的 token 重读函数（可注入测试）；默认读 env/配置文件。
 	// 返回与当前不同的非空值则热替换 Client.Token 并重试一次。
 	TokenLoader func() string
+
+	// /v1/* 请求计数（面板概览展示）。fail=状态码 ≥400（含上游映射的 5xx）。
+	total, ok, fail atomic.Int64
 }
 
 // New 装配。
@@ -115,13 +119,53 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/models", s.handleModels)
 	mux.HandleFunc("GET /health", s.handleHealth)
-	mux.HandleFunc("POST /v1/chat/completions", s.handleChat)
-	mux.HandleFunc("POST /v1/messages", s.handleMessages)
-	mux.HandleFunc("POST /v1/responses", s.handleResponses)
+	mux.HandleFunc("POST /v1/chat/completions", s.metric(s.handleChat))
+	mux.HandleFunc("POST /v1/messages", s.metric(s.handleMessages))
+	mux.HandleFunc("POST /v1/responses", s.metric(s.handleResponses))
 	mux.HandleFunc("GET /admin", handler.PanelHandler())
-	mux.HandleFunc("GET /admin/api/overview", handler.Overview(s.Cfg, s.Client))
+	mux.HandleFunc("GET /admin/api/overview", handler.Overview(s.Cfg, s.Client, s.Stats))
+	mux.HandleFunc("GET /admin/api/balance", handler.BalanceHandler(s.Cfg, s.Client))
+	mux.HandleFunc("GET /admin/api/touch", handler.TouchHandler(s.Cfg, s.Client))
 	mux.HandleFunc("POST /admin/api/claim", handler.ClaimHandler(s.Cfg, s.Client, nil))
+	mux.HandleFunc("GET /admin/api/claim/progress", handler.ClaimProgressHandler(s.Cfg))
+	mux.HandleFunc("GET /admin/api/logs", handler.LogsHandler(s.Cfg, s.Log.Recent))
 	return mux
+}
+
+// statusWriter 记录最终状态码给计数用；透传 Flush（流式翻译依赖）。
+type statusWriter struct {
+	http.ResponseWriter
+	code int
+}
+
+func (w *statusWriter) WriteHeader(c int) {
+	w.code = c
+	w.ResponseWriter.WriteHeader(c)
+}
+
+func (w *statusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// metric /v1/* 请求计数中间件：total++，结束按状态码落 ok/fail。
+func (s *Server) metric(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sw := &statusWriter{ResponseWriter: w, code: 200}
+		s.total.Add(1)
+		next(sw, r)
+		if sw.code < 400 {
+			s.ok.Add(1)
+		} else {
+			s.fail.Add(1)
+		}
+	}
+}
+
+// Stats 面板概览读的请求计数快照。
+func (s *Server) Stats() map[string]int64 {
+	return map[string]int64{"total": s.total.Load(), "ok": s.ok.Load(), "fail": s.fail.Load()}
 }
 
 // errJSON OpenAI 错误形状（对齐 _err）。

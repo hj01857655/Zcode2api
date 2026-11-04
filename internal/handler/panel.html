@@ -5,87 +5,529 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ZCode2api-go</title>
 <style>
-:root{--bg:#0f1115;--card:#181b22;--line:#262b36;--tx:#e6e9ef;--dim:#8b93a3;--ok:#4ade80;--bad:#f87171;--warn:#fbbf24;--acc:#6ea8fe}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.6 "Segoe UI",system-ui,sans-serif}
-.wrap{max-width:980px;margin:0 auto;padding:20px 16px 60px}
-h1{font-size:18px;margin:0 0 4px}
-.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:16px;flex-wrap:wrap}
-.tabs button{background:none;border:none;color:var(--dim);padding:8px 14px;cursor:pointer;font-size:14px;border-bottom:2px solid transparent}
-.tabs button.on{color:var(--acc);border-bottom-color:var(--acc)}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:14px}
+:root{
+--bg:#16171b;--bg-2:#1b1d22;--panel:#1f2127;--panel-2:#23252c;
+--hairline:#2c2f37;--hairline-soft:#26282f;
+--ink:#e9e7e1;--ink-dim:#b3b6bf;--ink-mute:#838794;
+--amber:#e8a33d;--amber-deep:#c9862a;--amber-ink:#241a09;--amber-hover:#f0b055;
+--mint:#62c370;--mint-dim:#3d8a4a;--red:#e05252;--red-dim:#8f3434;
+--qbar-bg:#2b2e36;--qbar-pct:#97a1b4;--err-soft:#f0b9b9;--ok-soft:#8fd493;
+--mono:"Cascadia Code","Consolas","SF Mono",monospace;
+--body:"Segoe UI","Microsoft YaHei UI","PingFang SC",sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);font:14px/1.6 var(--body);display:flex;overflow:hidden}
+button{background:var(--amber);border:1px solid var(--amber);border-radius:6px;color:var(--amber-ink);padding:6px 14px;cursor:pointer;font-size:13.5px;font-weight:600;font-family:var(--body)}
+button:hover:not(:disabled){background:var(--amber-hover)}
+button.ghost{background:var(--panel);border:1px solid var(--hairline);color:var(--ink-dim);font-weight:400;border-radius:7px;padding:7px 13px}
+button.ghost:hover:not(:disabled){color:var(--ink);border-color:rgba(233,231,225,.14)}
+button:disabled{opacity:.5;cursor:wait}
+input{background:#0e1116;border:1px solid var(--hairline);border-radius:6px;color:var(--ink);padding:7px 10px;font-size:13px;width:180px;font-family:var(--body)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--hairline-soft)}
+th{color:var(--ink-mute);font-weight:400;font-size:12px}
+tr.hl{background:rgba(224,82,82,.06)}
+tr.subrow td{background:var(--bg-2);padding:8px 12px}
+tr.subrow table{width:auto}
+tr.subrow th,tr.subrow td{border-bottom:1px solid var(--hairline-soft)}
+.ok{color:var(--mint)}.bad{color:var(--red)}.warn{color:var(--amber)}.dim{color:var(--ink-mute)}
+.mono{font-family:var(--mono);font-size:12px}
+pre.mono{white-space:pre-wrap;word-break:break-all;margin:0;font-size:12px}
+.badge{display:inline-block;border-radius:99px;padding:1px 9px;font-size:11px;font-weight:600}
+.badge.on{background:rgba(98,195,112,.12);color:var(--mint)}.badge.off{background:rgba(224,82,82,.12);color:var(--red)}
+/* ── 侧栏导航（zcode-hub 形态） ── */
+.sidenav{width:208px;flex:none;display:flex;flex-direction:column;gap:4px;padding:16px 10px 12px;border-right:1px solid var(--hairline-soft);background:var(--bg-2)}
+.side-logo{font-family:var(--mono);font-size:16.5px;letter-spacing:.18em;font-weight:600;color:var(--ink);white-space:nowrap;padding:0 10px 14px;display:flex;align-items:baseline;min-width:0}
+.side-logo .ver{font-size:12px;color:var(--ink-mute);letter-spacing:.08em;margin-left:6px;overflow:hidden;text-overflow:ellipsis;flex:1}
+.side-item{position:relative;display:flex;align-items:center;gap:9px;text-align:left;padding:9px 12px;border-radius:8px;color:var(--ink-dim);white-space:nowrap;cursor:pointer;background:none;border:none;font:14px var(--body)}
+.side-item:hover{background:var(--panel);color:var(--ink)}
+.side-item.on{background:var(--panel-2);color:var(--amber)}
+.side-item.on::before{content:"";position:absolute;left:0;top:22%;bottom:22%;width:3px;border-radius:2px;background:var(--amber)}
+.side-spacer{flex:1}
+.side-foot{display:flex;align-items:center;gap:8px;padding:12px 10px 2px;border-top:1px solid var(--hairline-soft);font-size:13px;color:var(--ink-dim)}
+.side-foot .status-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--mint);box-shadow:0 0 7px rgba(98,195,112,.5);flex:none}
+.status-dot.run{background:var(--red);box-shadow:0 0 7px rgba(224,82,82,.55);animation:pulse 1.6s ease-in-out infinite}
+.status-dot.off{background:rgba(233,231,225,.28);box-shadow:none}
+@keyframes pulse{50%{opacity:.45}}
+/* ── 主区 ── */
+.main{flex:1;overflow:auto;display:flex;flex-direction:column;min-width:0}
+.toolbar{margin:10px 18px 0;padding:0;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.toolbar .grow{flex:1}
+.toolbar .tslot{font-size:12px;color:var(--ink-mute)}
+.content{padding:14px 18px 40px;max-width:1180px;width:100%}
+.card{background:var(--panel);border:1px solid var(--hairline-soft);border-radius:10px;padding:16px;margin-bottom:14px}
 .card h3{margin:0 0 10px;font-size:14px}
 .kv{display:grid;grid-template-columns:110px 1fr;gap:4px 12px;font-size:13px}
-.kv b{color:var(--dim);font-weight:400}
-button{background:var(--acc);border:none;border-radius:6px;color:#0b1220;padding:7px 14px;cursor:pointer;font-size:13px;font-weight:600}
-button.ghost{background:none;border:1px solid var(--line);color:var(--tx);font-weight:400}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
-th{color:var(--dim);font-weight:400}
-.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}.dim{color:var(--dim)}
-.badge{display:inline-block;border-radius:99px;padding:1px 9px;font-size:11px;font-weight:600}
-.badge.on{background:#14321f;color:var(--ok)}.badge.off{background:#321414;color:var(--bad)}
-.mono{font-family:Consolas,monospace;font-size:12px}
-pre.mono{white-space:pre-wrap;word-break:break-all;margin:0}
-#msg{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1f2430;border:1px solid var(--line);border-radius:8px;padding:10px 18px;font-size:13px;display:none;max-width:80vw}
-input{background:#0d0f13;border:1px solid var(--line);border-radius:6px;color:var(--tx);padding:7px 10px;font-size:13px;width:180px}
+.kv b{color:var(--ink-mute);font-weight:400}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
+.stat{background:var(--panel-2);border:1px solid var(--hairline);border-radius:8px;padding:10px 12px}
+.stat .v{font-size:17px;font-weight:600}
+.stat .k{font-size:11px;color:var(--ink-mute)}
+/* ── 配额条（qbar，hub 同款） ── */
+.qwin{min-width:210px}
+.qbar{height:17px;border-radius:4px;background:var(--qbar-bg);overflow:hidden;margin-top:4px;position:relative}
+.qbar-fill{height:100%;background:var(--mint);border-radius:3px;transition:width .3s ease}
+.qbar.warn .qbar-fill{background:var(--amber)}
+.qbar.danger .qbar-fill{background:var(--red)}
+.qbar-pct{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:11px;color:var(--qbar-pct);letter-spacing:.02em}
+.qbar-pct.in-fill{color:#0e1116;font-weight:600}
+.qwin-l{font-size:11px;color:var(--ink-mute);margin-top:1px}
+.balout{font-size:12px;line-height:1.5}
+/* ── toast / modal（hub ui-bus 形态） ── */
+.toast-zone{position:fixed;left:50%;bottom:40px;transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;align-items:center;z-index:60}
+.toast{background:var(--panel-2);border:1px solid var(--hairline);border-radius:7px;padding:10px 16px;font-size:14px;max-width:min(72vw,480px);display:flex;gap:10px;animation:tin .18s}
+.toast .t-ic{flex:none;color:var(--ink-mute)}
+.toast.ok .t-ic{color:var(--mint)}.toast.err .t-ic{color:var(--red)}.toast.warn .t-ic{color:var(--amber)}
+.toast.ok{border-color:var(--mint-dim)}.toast.err{border-color:var(--red-dim);color:var(--err-soft)}.toast.warn{border-color:rgba(232,163,61,.45)}
+.toast .detail{display:block;color:var(--ink-mute);font-size:13px;margin-top:2px;white-space:pre-wrap;word-break:break-all}
+.toast.err .detail{color:var(--err-soft,#c98f8f)}
+.toast.expandable{cursor:pointer}
+.toast.expandable.open{max-width:min(88vw,720px)}
+@keyframes tin{from{opacity:0;transform:translateY(6px)}}
+.cm-mask{position:fixed;inset:0;background:rgba(10,11,14,.72);display:none;align-items:center;justify-content:center;z-index:50}
+.cm-panel{position:relative;width:440px;max-width:calc(100vw - 48px);background:var(--panel);border:1px solid var(--hairline);border-radius:12px;padding:22px 22px 18px;animation:tin .18s;overflow:hidden}
+.cm-strip{position:absolute;top:0;left:0;right:0;height:2px;background:var(--amber)}
+.cm-strip.ok{background:var(--mint)}.cm-strip.err{background:var(--red)}.cm-strip.warn{background:var(--amber)}
+.cm-head{display:flex;gap:10px;align-items:center;margin-bottom:10px}
+.cm-ic{font-size:18px;line-height:1}
+.cm-ic.ok{color:var(--mint)}.cm-ic.err{color:var(--red)}.cm-ic.warn{color:var(--amber)}
+.cm-title{font-size:15px;font-weight:600;word-break:break-all}
+.cm-desc{font-size:13px;color:var(--ink-dim);line-height:1.7;max-height:60vh;overflow:auto}
+.cm-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+/* ── 网关自测（hub gateway-test 形态） ── */
+.gta-tabs{display:flex;gap:4px;margin-bottom:10px}
+.gta-tabs button{background:none;border:1px solid var(--hairline);color:var(--ink-mute);border-radius:6px;padding:4px 12px;font-weight:400;font-size:12.5px}
+.gta-tabs button.on{color:var(--amber);border-color:var(--amber-deep);background:rgba(232,163,61,.08)}
+textarea.gta-body{width:100%;height:110px;background:#0e1116;border:1px solid var(--hairline);border-radius:6px;color:var(--ink);font:12px var(--mono);padding:10px;resize:vertical}
+.gta-row{display:flex;gap:6px;align-items:center;margin-top:10px;flex-wrap:wrap}
+pre.gta-res{white-space:pre-wrap;word-break:break-all;font:12px var(--mono);background:#0e1116;border:1px solid var(--hairline);border-radius:6px;padding:10px;max-height:240px;overflow:auto;margin:10px 0 0}
+.gta-meta{font-size:12px;margin-top:10px}
+.gta-hist{font-size:12px;color:var(--ink-mute);margin-top:8px}
+/* ── 网关接入卡片 ── */
+.acc-row{display:flex;align-items:center;gap:8px;margin:6px 0}
+.acc-row .k{width:120px;flex:none;color:var(--ink-mute);font-size:12px}
+.acc-row .v{font-family:var(--mono);font-size:12.5px;background:#0e1116;border:1px solid var(--hairline);border-radius:6px;padding:5px 9px;flex:1;min-width:0;overflow:auto;white-space:nowrap}
+button.mini{padding:3px 10px;font-size:12px}
+pre.acc-pre{white-space:pre-wrap;word-break:break-all;font:12px var(--mono);background:#0e1116;border:1px solid var(--hairline);border-radius:6px;padding:10px;margin:10px 0 0;max-height:340px;overflow:auto}
+/* ── 登录 ── */
+#login{position:fixed;inset:0;background:var(--bg);display:none;align-items:center;justify-content:center}
+.login-card{background:var(--panel);border:1px solid var(--hairline);border-radius:12px;padding:32px 36px;width:320px;text-align:center}
+.login-card h1{font-size:20px;margin-bottom:4px;font-family:var(--mono);letter-spacing:.14em}
+.login-card p{color:var(--ink-mute);font-size:13px;margin:0 0 18px}
+.login-card input{width:100%;margin-bottom:12px;text-align:center}
+.login-card button{width:100%}
+#lerr{color:var(--red);font-size:13px;min-height:18px;margin-top:10px}
 </style>
 </head>
 <body>
-<div class="wrap">
-<h1>ZCode2api-go 控制台</h1>
-<div class="tabs">
-<button class="on" onclick="tab(this,'vMain')">概览</button>
-<button onclick="tab(this,'vDiag')">诊断</button>
+<nav class="sidenav">
+  <div class="side-logo">ZCODE·GW<span class="ver" id="sideVer"></span></div>
+  <button class="side-item on" data-v="vMain" onclick="showView(this)">◧ 概览</button>
+  <button class="side-item" data-v="vPool" onclick="showView(this)">☰ 账号池</button>
+  <button class="side-item" data-v="vDiag" onclick="showView(this)">⚙ 诊断</button>
+  <button class="side-item" data-v="vLog" onclick="showView(this)">≡ 请求日志</button>
+  <div class="side-spacer"></div>
+  <div class="side-foot"><span class="status-dot off" id="dot"></span><span class="status-text" id="dotTxt">未加载</span></div>
+</nav>
+<div class="main">
+<div class="toolbar">
+  <button class="ghost claim-all" id="tbTouch" style="display:none" onclick="doTouchAll(this)">探测投放</button>
+  <button id="tbClaim" style="display:none" onclick="doClaimAll(this)">全部领取</button>
+  <span class="grow"></span>
+  <label class="tslot" style="cursor:pointer"><input type="checkbox" id="auto" checked style="width:auto;vertical-align:-2px"> 自动刷新</label>
+  <span class="tslot" id="refreshedAt"></span>
 </div>
+<div class="content">
 <div id="vMain"></div>
+<div id="vPool" style="display:none"></div>
 <div id="vDiag" style="display:none"></div>
+<div id="vLog" style="display:none"></div>
 </div>
-<div id="msg"></div>
+</div>
+<div id="login">
+  <div class="login-card">
+    <h1>ZCODE·GW</h1>
+    <p>输入管理 API Key 登录</p>
+    <input type="password" id="lk" placeholder="API Key" onkeydown="if(event.key==='Enter')doLogin()">
+    <button onclick="doLogin()">登录</button>
+    <div id="lerr"></div>
+  </div>
+</div>
+<div class="toast-zone" id="tz"></div>
+<div class="cm-mask" id="modal" onclick="if(event.target===this)closeModal()"></div>
 <script>
 "use strict";
 const $=s=>document.querySelector(s);
 function authHeaders(){const k=localStorage.zc_apikey;if(!k)return{};return{"Authorization":"Bearer "+k}}
-async function api(p){const r=await fetch(p,{headers:authHeaders()});try{return await r.json()}catch(e){return{error:String(e)}}}
-let tt;function toast(t){const m=$("#msg");m.textContent=t;m.style.display="block";clearTimeout(tt);tt=setTimeout(()=>m.style.display="none",3000)}
+async function api(p,opt){const r=await fetch(p,Object.assign({headers:authHeaders()},opt||{}));try{return await r.json()}catch(e){return{error:String(e)}}}
 function esc(s){const d=document.createElement("div");d.textContent=s==null?"":String(s);return d.innerHTML}
-function tab(btn,id){document.querySelectorAll(".tabs button").forEach(b=>b.classList.remove("on"));btn.classList.add("on");
-  $("#vMain").style.display=id==="vMain"?"":"none";$("#vDiag").style.display=id==="vDiag"?"":"none"}
+// toast 对齐 hub ui-bus：kind 着色 + 长 detail 收起可点展开 + 3.2/5.2s
+let tzSeq=0;
+function toast(msg,kind,detail){
+  kind=kind||"ok";detail=detail?String(detail):"";
+  const wrap=document.createElement("div");
+  const long=!!detail&&(detail.includes("\n")||detail.length>90);
+  wrap.className="toast "+kind+(long?" expandable":"");
+  let open=false;
+  function paint(){
+    const shown=long&&!open?detail.split("\n")[0].slice(0,90)+"…":detail;
+    wrap.innerHTML=`<span class="t-ic">${({ok:"✓",err:"✗",warn:"⚠"})[kind]||"ℹ"}</span><span class="t-body">${esc(msg)}${detail?`<span class="detail">${esc(shown)}${long?(open?" ▼":" ▲"):""}</span>`:""}</span>`;
+  }
+  paint();
+  if(long)wrap.onclick=()=>{open=!open;wrap.classList.toggle("open",open);paint()};
+  $("#tz").appendChild(wrap);
+  setTimeout(()=>wrap.remove(),detail?5200:3200);
+}
+// showModal 对齐 hub ConfirmModal：色条+图标+Esc/遮罩关+排队
+const _mq=[];let _mc=null;
+function showModal(o){if(_mc){_mq.push(o);return}_mc=o;_renderModal()}
+function _renderModal(){
+  if(!_mc)return;
+  const m=_mc,kind=m.kind||"plain";
+  _cmFns=m.actions||[];
+  const btns=_cmFns.length
+    ?_cmFns.map((a,i)=>`<button class="${a.primary===false?"ghost":""}" onclick="cmRun(${i},this)">${esc(a.label)}</button>`).join("")
+    :`<button onclick="closeModal()">${esc(m.okLabel||"确定")}</button>`;
+  $("#modal").style.display="flex";
+  $("#modal").innerHTML=`<div class="cm-panel"><div class="cm-strip ${kind}"></div>
+    <div class="cm-head"><span class="cm-ic ${kind}">${({ok:"✓",err:"✗",warn:"⚠"})[kind]||"ℹ"}</span><div class="cm-title">${esc(m.title)}</div></div>
+    <div class="cm-desc">${m.body||""}</div>
+    <div class="cm-actions">${btns}</div></div>`;
+  $("#modal").querySelector(".cm-actions button").focus();
+}
+// actions:[{label,primary?,onclick?}] —— 无 onclick 的按钮=关闭；异步动作期间按钮禁用
+let _cmFns=[];
+async function cmRun(i,btn){
+  const fn=(_cmFns[i]||{}).onclick;
+  if(typeof fn!=="function"){closeModal();return}
+  btn.disabled=true;const old=btn.textContent;btn.textContent="处理中…";
+  try{await fn(btn)}finally{btn.disabled=false;btn.textContent=old}
+}
+// claimRunWithProgress：POST 起后台任务 → 2s 轮询。领取链含验证码求解与
+// 429 退避，全部账号串行可达分钟级，同步等待会表现为永久"处理中"。
+async function claimRunWithProgress(account,onProg){
+  const q=account?("?account="+encodeURIComponent(account)):"";
+  const t0=await api("/admin/api/claim"+q,{method:"POST"});
+  if(!t0||!t0.task_id)return t0||{};
+  for(;;){
+    await new Promise(z=>setTimeout(z,2000));
+    const p=await api("/admin/api/claim/progress?id="+t0.task_id);
+    if(!p||!p.task_id)return{results:t0.results||[],error:(p&&p.error)||"任务丢失"};
+    if(onProg)onProg(p);
+    const pe=document.getElementById("cmProg");
+    if(pe){const last=(p.results||[]).slice(-1)[0];
+      pe.textContent=last?`已完成 ${p.done}/${p.total} · 上一个：${last.account} — ${last.message}`
+        :`正在领取第 ${p.done+1}/${p.total} 个…（含验证码求解，单号最长约 2 分钟）`}
+    if(p.running===false)return{results:p.results||[]};
+  }
+}
+function showClaimResults(res){
+  const okN=res.filter(x=>x.ok).length;
+  showModal({title:`领取结果：${okN} / ${res.length} 号成功`,kind:okN?"ok":"warn",
+    body:`<table><tr><th>账号</th><th>结果</th></tr>${res.map(x=>`<tr><td class="mono">${esc(x.account)}</td><td class="${x.ok?"ok":"warn"}">${esc(x.message)}</td></tr>`).join("")}</table>`});
+  doBalanceAll();
+}
+function closeModal(){$("#modal").style.display="none";_mc=_mq.shift()||null;_renderModal()}
+document.addEventListener("keydown",e=>{if(e.key==="Escape")closeModal()});
+function showView(btn){
+  document.querySelectorAll(".side-item").forEach(b=>b.classList.remove("on"));btn.classList.add("on");
+  const id=btn.dataset.v;
+  ["vMain","vPool","vDiag","vLog"].forEach(v=>$("#"+v).style.display=v===id?"":"none");
+  const pool=id==="vPool";
+  $("#tbTouch").style.display=pool?"":"none";
+  $("#tbClaim").style.display=pool?"":"none";
+  if(id==="vDiag")loadDiag();
+  if(id==="vLog")loadLogs();
+}
+function saveKey(){localStorage.zc_apikey=document.getElementById("k").value.trim();toast("已保存");loadAll()}
+function logout(){localStorage.removeItem("zc_apikey");location.reload()}
+function showLogin(err){
+  $("#login").style.display="flex";
+  $("#lerr").textContent=err||"";document.getElementById("lk").value="";
+  setTimeout(()=>document.getElementById("lk").focus(),50)}
+function doLogin(){
+  const v=document.getElementById("lk").value.trim();
+  if(!v){$("#lerr").textContent="请输入 API Key";return}
+  localStorage.zc_apikey=v;$("#lerr").textContent="";
+  $("#login").style.display="none";
+  loadAll()}
+function setDot(cls,txt){$("#dot").className="status-dot "+cls;$("#dotTxt").textContent=txt}
 
-async function load(){
-  const o=await api("/admin/api/overview");
-  if(!o.credential){$("#vMain").innerHTML='<div class="card bad">overview 加载失败</div>';return}
+function fmtUnits(n){if(n==null)return"—";n=Number(n);const a=Math.abs(n);
+  if(a>=1e8)return(n/1e8).toFixed(2)+"亿";if(a>=1e4)return(n/1e4).toFixed(1)+"万";return String(n)}
+function fmtDur(s){if(s==null)return"—";s=Math.max(0,Number(s));
+  if(s<90)return s+"s";if(s<3600)return Math.round(s/60)+"分";
+  if(s<86400)return(s/3600).toFixed(1)+"小时";return(s/86400).toFixed(1)+"天"}
+function expCell(a){
+  if(!a.exp_at)return'<span class="dim">—</span>';
+  if(a.expired)return`<span class="bad">已过期</span><div class="dim mono">${esc(a.exp_at)}</div>`;
+  const cls=a.exp_left_s<12*3600?"bad":(a.exp_left_s<25*3600?"warn":"ok");
+  return`<span class="${cls}">${fmtDur(a.exp_left_s)}</span><div class="dim mono">${esc(a.exp_at)}</div>`}
+
+async function loadAll(){
+  const t0=performance.now();
+  const [o,h]=await Promise.all([api("/admin/api/overview"),fetch("/health",{headers:authHeaders()}).then(r=>r.json()).catch(()=>null)]);
+  if(!o.credential){
+    const err=o.error,msg=typeof err==="object"?(err&&err.message||JSON.stringify(err)):String(err||"");
+    if(/invalid api key/i.test(msg)||!localStorage.zc_apikey){setDot("off","未登录");showLogin(localStorage.zc_apikey?"API Key 无效，请重新登录":"");return}
+    setDot("run","网关异常");
+    $("#vMain").innerHTML='<div class="card bad">overview 加载失败'+(msg?" — "+esc(msg):"")+"</div>";return}
   const c=o.credential;
-  let html=`<div class="card"><h3>凭据</h3><div class="kv">
+  setDot(c.valid?"":"run",c.mode==="pool"?(c.valid?`运行中 · 池 ${c.accounts} 号`:"账号池为空"):c.valid?"运行中 · 单 token":"无凭据");
+  if(h&&h.version)$("#sideVer").textContent="v"+h.version;
+  renderMain(o,h);
+  const ms=Math.round(performance.now()-t0);
+  $("#refreshedAt").textContent=`更新于 ${new Date().toTimeString().slice(0,8)}（${ms}ms）`;
+}
+function renderMain(o,h){
+  const c=o.credential,st=o.stats||{};
+  const uw=(h&&h.usage_window)||{};
+  const winTxt=uw.active?`<span class="ok">进行中 · 剩 ${uw.remaining_min} 分</span>`:`<span class="dim">未开始（${esc(uw.starts_at||"—")} 起）</span>`;
+  let html=accCardHtml()+`<div class="card"><div class="stats">
+    <div class="stat"><div class="k">使用窗口（23:00–09:00）</div><div class="v">${winTxt}</div></div>
+    <div class="stat"><div class="k">下次自动领取</div><div class="v">${esc((h&&h.next_claim)||"—")}</div></div>
+    <div class="stat"><div class="k">请求总数</div><div class="v">${st.total!=null?st.total:"—"}</div></div>
+    <div class="stat"><div class="k">失败请求</div><div class="v ${st.fail>0?"bad":"ok"}">${st.fail!=null?st.fail:"—"}${st.total?` <span class="dim" style="font-size:11px">成功 ${st.ok}</span>`:""}</div></div>
+  </div></div>`;
+  html+=`<div class="card"><h3>凭据</h3><div class="kv">
     <b>状态</b><span class="${c.valid?"ok":"bad"}">${c.valid?"有效":"无效"}${c.notice?" — "+esc(c.notice):""}</span>
     <b>模式</b><span>${esc(c.mode||"—")}${c.token_chars!=null?` <span class="dim mono">token ${c.token_chars} 字符</span>`:""}</span>
-    <b>本地鉴权</b><span>${o.local_auth?`<span class="badge on">API_KEY 已开启</span> <input id="k" placeholder="API Key" value="${esc(localStorage.zc_apikey||"")}"> <button class="ghost" onclick="localStorage.zc_apikey=document.getElementById('k').value;toast('已保存')">保存</button>`:'<span class="badge off">未开启（仅回环）</span>'}</span>
+    <b>本地鉴权</b><span>${o.local_auth?`<span class="badge on">API_KEY 已开启</span> <input id="k" placeholder="API Key" value="${esc(localStorage.zc_apikey||"")}"> <button class="ghost" onclick="saveKey()">保存</button> <button class="ghost" onclick="logout()">退出登录</button>`:'<span class="badge off">未开启（仅回环）</span>'}</span>
   </div></div>`;
+  let poolHtml='<div class="card bad">当前不是账号池模式（单 token 或无凭据）</div>';
   if(c.mode==="pool"){
-    html+=`<div class="card"><h3>账号池（${c.accounts} 个）</h3><table>
-    <tr><th>label</th><th>品牌</th><th>token</th><th>保存时间</th><th>冷却</th></tr>
-    ${(c.account_list||[]).map(a=>`<tr><td class="mono">${esc(a.label)}</td><td>${esc(a.provider||"—")}</td>
-    <td class="dim mono">${a.token_chars} 字符</td><td class="dim mono">${esc(a.saved_at||"—")}</td>
-    <td>${a.cooldown_s?`<span class="warn">${a.cooldown_s}s</span>`:'<span class="ok">—</span>'}</td></tr>`).join("")}
+    const list=c.account_list||[];
+    const coolN=list.filter(a=>a.cooldown_s>0).length, expN=list.filter(a=>a.expired).length;
+    const availN=list.length-coolN-expN;
+    poolHtml=`<div class="card"><h3>账号池（${list.length} 号 · 可用 ${availN} · 冷却 ${coolN} · 过期 ${expN}）</h3><table>
+    <tr><th>label</th><th>品牌</th><th>过期</th><th>冷却</th><th>token</th><th>余额</th><th>操作</th></tr>
+    ${list.map((a,i)=>{
+      const hl=(a.cooldown_s>0||a.expired||a.exp_left_s<12*3600)?' class="hl"':"";
+      return`<tr${hl} id="row_${i}"><td class="mono">${esc(a.label)}</td><td>${esc(a.provider||"—")}</td>
+      <td>${expCell(a)}</td>
+      <td>${a.cooldown_s?`<span class="warn">${fmtDur(a.cooldown_s)}</span>`:'<span class="ok">—</span>'}</td>
+      <td class="dim mono">${a.token_chars} 字符</td>
+      <td class="balout" id="bal_${esc(a.label)}">${balHtml(_balCache[a.label])}</td>
+      <td><button class="ghost" onclick="togglePlans(${i},'${esc(a.label)}',this)">▸投放</button>
+      <button class="ghost" onclick="doTouch(this,'${esc(a.label)}')">弹窗</button>
+      <button class="ghost" onclick="doBalance(this,'${esc(a.label)}')">刷新</button>
+      <button class="ghost" onclick="doClaimRow(this,'${esc(a.label)}')">领取</button></td></tr>`}).join("")}
     </table></div>`;
+    if(list.some(a=>!_balCache[a.label]))doBalanceAll();
   }
   html+=`<div class="card"><h3>模型</h3><table><tr><th>id</th><th>备注</th></tr>
   ${(o.models||[]).map(m=>`<tr><td class="mono">${esc(m.id)}</td><td>${m.default?'<span class="badge on">default</span>':'<span class="dim">—</span>'}</td></tr>`).join("")}
   </table></div>`;
-  html+=`<div class="card"><h3>限时套餐领取 <span class="dim">（每日自动跑一次；幂等，已领过无害）</span></h3>
-  <div class="row"><button class="ghost" onclick="doClaim(this,1)">只看可领</button>
-  <button onclick="doClaim(this,0)">立即领取</button><span id="claimOut" class="dim"></span></div></div>`;
   $("#vMain").innerHTML=html;
+  paintAcc();
+  $("#vPool").innerHTML=poolHtml;
+  window._models=(o.models||[]).map(m=>m.id);
+  if(!localStorage.getItem("gta_model_default")&&o.models&&o.models.length){
+    const d=o.models.find(m=>m.default)||o.models[0];if(d)localStorage.setItem("gta_model_default",d.id)}
 }
-async function doClaim(btn,preview){
-  btn.disabled=true;$("#claimOut").textContent=preview?"查询中…":"领取中…";
-  const r=await api("/admin/api/claim"+(preview?"?preview=1":""),{method:"POST"});
-  $("#claimOut").innerHTML=(r.results||[]).map(x=>`<span class="${x.ok?"ok":"warn"}">${esc(x.account)}: ${esc(x.message)}</span>`).join(" ");
-  btn.disabled=false;
+// ── 网关接入：协议切换决定 Base URL 带不带 /v1（OpenAI SDK 直拼路径→带；
+// Anthropic SDK 自动追加 /v1/messages→不带）。URL 按当前访问 origin 生成，复制即用。 ──
+let _accProto="openai",_accKeyOpen=false;
+function _accModel(){const m=localStorage.getItem("gta_model_default");if(m)return m;
+  return (window._models&&window._models[0])||"GLM-5.3-Flash"}
+function _accBase(){return _accProto==="anthropic"?location.origin:location.origin+"/v1"}
+function _accEndpoint(){return _accProto==="anthropic"?"/v1/messages":(_accProto==="responses"?"/v1/responses":"/v1/chat/completions")}
+function _accKeyText(){const k=localStorage.zc_apikey||"";
+  if(!k)return"（登录后此处显示接入 Key）";
+  return _accKeyOpen?k:(k.length>12?k.slice(0,8)+"…"+k.slice(-4):"•".repeat(k.length))}
+function accCardHtml(){
+ return`<div class="card"><h3>网关接入</h3>
+  <div class="gta-tabs" id="accTabs">
+    <button data-p="openai" onclick="setAccProto('openai')">OpenAI</button>
+    <button data-p="anthropic" onclick="setAccProto('anthropic')">Anthropic</button>
+    <button data-p="responses" onclick="setAccProto('responses')">Responses</button>
+  </div>
+  <div class="acc-row"><span class="k">Base URL（SDK）</span><span class="v" id="accBase"></span>
+    <button class="ghost mini" onclick="copyText(document.getElementById('accBase').textContent)">复制</button></div>
+  <div class="acc-row"><span class="k">Endpoint（curl）</span><span class="v" id="accEp"></span>
+    <button class="ghost mini" onclick="copyText(document.getElementById('accEp').textContent)">复制</button></div>
+  <div class="acc-row"><span class="k">API Key</span><span class="v" id="accKey"></span>
+    <button class="ghost mini" id="accKeyBtn" onclick="toggleAccKey()">显示</button>
+    <button class="ghost mini" onclick="copyKey()">复制</button></div>
+  <div class="acc-row"><span class="k">接入示例</span>
+    <button class="ghost mini" onclick="copyText(accExample())">复制示例</button>
+    <span class="dim" style="font-size:12px">OpenAI SDK 会在 base_url 后直接拼路径，所以带 /v1；Anthropic SDK 自己追加 /v1/messages，所以不带。</span></div>
+  <pre class="acc-pre" id="accCode"></pre>
+ </div>`}
+function accExample(){
+ const base=_accBase(),ep=location.origin+_accEndpoint();
+ const key=localStorage.zc_apikey||"sk-your-gateway-key",m=_accModel();
+ if(_accProto==="anthropic")return`# Python（anthropic SDK）
+import anthropic
+
+client = anthropic.Anthropic(base_url="${base}", api_key="${key}")
+msg = client.messages.create(
+    model="${m}", max_tokens=256,
+    messages=[{"role": "user", "content": "你好"}],
+)
+print(msg.content[0].text)
+
+# curl
+curl ${ep} \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer ${key}" \\
+  -H "anthropic-version: 2023-06-01" \\
+  -d '{"model": "${m}", "max_tokens": 256, "messages": [{"role": "user", "content": "你好"}]}'`;
+ if(_accProto==="responses")return`# Python（openai SDK · Responses API）
+from openai import OpenAI
+
+client = OpenAI(base_url="${base}", api_key="${key}")
+resp = client.responses.create(model="${m}", input="你好")
+print(resp.output_text)
+
+# curl
+curl ${ep} \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer ${key}" \\
+  -d '{"model": "${m}", "input": "你好", "max_output_tokens": 256}'`;
+ return`# Python（openai SDK · Chat Completions）
+from openai import OpenAI
+
+client = OpenAI(base_url="${base}", api_key="${key}")
+resp = client.chat.completions.create(
+    model="${m}",
+    messages=[{"role": "user", "content": "你好"}],
+)
+print(resp.choices[0].message.content)
+
+# Node.js
+import OpenAI from "openai";
+const client = new OpenAI({base_url: "${base}", api_key: "${key}"});
+const resp = await client.chat.completions.create({
+    model: "${m}",
+    messages: [{role: "user", content: "你好"}],
+});
+console.log(resp.choices[0].message.content);
+
+# curl
+curl ${ep} \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer ${key}" \\
+  -d '{"model": "${m}", "messages": [{"role": "user", "content": "你好"}]}'`}
+function paintAcc(){
+ const el=document.getElementById("accBase");if(!el)return;
+ document.querySelectorAll("#accTabs button").forEach(b=>b.classList.toggle("on",b.dataset.p===_accProto));
+ el.textContent=_accBase();
+ document.getElementById("accEp").textContent=location.origin+_accEndpoint();
+ document.getElementById("accKey").textContent=_accKeyText();
+ document.getElementById("accKeyBtn").textContent=_accKeyOpen?"隐藏":"显示";
+ document.getElementById("accCode").textContent=accExample();
+}
+function setAccProto(p){_accProto=p;paintAcc()}
+function toggleAccKey(){_accKeyOpen=!_accKeyOpen;paintAcc()}
+function copyKey(){const k=localStorage.zc_apikey||"";if(!k){toast("未登录，没有可复制的 Key","warn");return}copyText(k)}
+// copyText：http 面板非 secure context，navigator.clipboard 不可用 → textarea+execCommand 兜底
+function copyText(txt){
+ const ok=()=>toast("已复制到剪贴板");
+ function fb(){const ta=document.createElement("textarea");ta.value=txt;
+   ta.style.position="fixed";ta.style.opacity="0";document.body.appendChild(ta);ta.select();
+   let good=false;try{good=document.execCommand("copy")}catch(e){}ta.remove();
+   good?ok():toast("复制失败，请手动选择文本","err")}
+ if(navigator.clipboard&&window.isSecureContext)navigator.clipboard.writeText(txt).then(ok,fb);else fb();
+}
+// ── 网关自测：协议 tab 决定端点与头，请求体 JSON 直接编辑（hub gateway-test 同形态） ──
+let _gtaProto="openai",_gtaAbort=null,_gtaHist=[];
+function gtaDefaultBody(){
+  const models=(window._models&&window._models.length)?window._models:["GLM-5.3-Flash"];
+  const m=localStorage.getItem("gta_model_default")&&models.includes(localStorage.getItem("gta_model_default"))?localStorage.getItem("gta_model_default"):models[0];
+  return _gtaProto==="responses"
+    ?{model:m,input:"hi",max_output_tokens:256,stream:false}
+    :{model:m,max_tokens:256,stream:false,messages:[{role:"user",content:"hi"}]}
+}
+function gtaPath(){return _gtaProto==="anthropic"?"/v1/messages":(_gtaProto==="responses"?"/v1/responses":"/v1/chat/completions")}
+function gtaSetProto(p){
+  _gtaProto=p;
+  document.querySelectorAll(".gta-tabs button").forEach(b=>b.classList.toggle("on",b.dataset.p===p));
+  $("#gtaBody").value=JSON.stringify(gtaDefaultBody(),null,2);
+  $("#gtaCode").style.display="none";
+}
+function gtaBodyObj(){
+  try{return JSON.parse($("#gtaBody").value||JSON.stringify(gtaDefaultBody()))}catch(e){return null}
+}
+function gtaCurl(){
+  const obj=gtaBodyObj();if(!obj)return"（请求体不是合法 JSON）";
+  obj.stream=false;
+  const h=["-H 'Content-Type: application/json'","-H 'Authorization: Bearer ${API_KEY}'"];
+  if(_gtaProto==="anthropic")h.push("-H 'anthropic-version: 2023-06-01'");
+  return `curl -X POST ${location.origin}${gtaPath()} \\\n  ${h.join(" \\\n  ")} \\\n  -d '${JSON.stringify(obj)}'`;
+}
+function gtaToggleCode(){
+  const el=$("#gtaCode");
+  if(el.style.display==="none"){el.textContent=gtaCurl();el.style.display="block"}else el.style.display="none";
+}
+function gtaResult(res){
+  _gtaHist.unshift(res);_gtaHist=_gtaHist.slice(0,10);
+  let txt=res.text;
+  try{txt=JSON.stringify(JSON.parse(res.text),null,2)}catch(e){/* 非 JSON 原样 */}
+  $("#gtaRes").innerHTML=`<div class="gta-meta"><span class="${res.ok?"ok":"bad"}">HTTP ${res.status||"—"}</span> · ${res.ms}ms${res.aborted?" · <span class='warn'>已中止</span>":""}</div><pre class="gta-res">${esc(txt.slice(0,4000))}</pre>`;
+  $("#gtaHist").innerHTML=_gtaHist.map(x=>`<div>${x.t} · ${x.proto} · HTTP <span class="${x.ok?"ok":"bad"}">${x.status||"—"}</span> · ${x.ms}ms</div>`).join("");
+}
+async function gtaSend(btn){
+  const obj=gtaBodyObj();
+  if(!obj){gtaResult({ok:false,status:0,ms:0,text:"请求体不是合法 JSON",proto:_gtaProto,t:new Date().toTimeString().slice(0,8)});return}
+  obj.stream=false; // 面板自测只走非流式
+  const headers={"Content-Type":"application/json"};
+  const k=localStorage.zc_apikey;if(k)headers.Authorization="Bearer "+k;
+  if(_gtaProto==="anthropic")headers["anthropic-version"]="2023-06-01";
+  const ac=new AbortController();_gtaAbort=ac;
+  btn.disabled=true;const t0=Date.now();
+  try{
+    const r=await fetch(gtaPath(),{method:"POST",headers,body:JSON.stringify(obj),signal:ac.signal});
+    const txt=await r.text();
+    gtaResult({ok:r.ok,status:r.status,ms:Date.now()-t0,text:txt,proto:_gtaProto,t:new Date().toTimeString().slice(0,8)});
+  }catch(e){
+    const ab=e&&e.name==="AbortError";
+    gtaResult({ok:false,status:0,ms:Date.now()-t0,text:ab?"请求已中止":"请求失败: "+e.message,proto:_gtaProto,aborted:ab,t:new Date().toTimeString().slice(0,8)});
+  }finally{btn.disabled=false;_gtaAbort=null}
+}
+function gtaAbort(){_gtaAbort&&_gtaAbort.abort()}
+// 请求日志：内存环最近 N 条（新的在前），与 request.log 同源
+async function loadLogs(){
+  let logs=[],err="";
+  try{const r=await api("/admin/api/logs?n=200");logs=r.logs||[]}catch(e){err=String(e)}
+  const row=(l)=>`<tr>
+    <td class="mono">${esc((l.ts||"").replace("T"," ").slice(0,19))}</td>
+    <td>${esc(l.proto||"")}${l.stream?' <span class="dim">SSE</span>':""}</td>
+    <td class="mono">${esc(l.model||"")}</td>
+    <td>${esc(l.account||"—")}</td>
+    <td class="${l.status===200?"ok":"warn"}">${l.status||"—"}${l.up_status&&l.up_status!==l.status?` <span class="dim">up ${l.up_status}</span>`:""}</td>
+    <td>${esc(l.finish||"")}</td>
+    <td class="mono">${l.ttft_ms?l.ttft_ms+"ms":"—"}</td>
+    <td class="mono">${l.total_ms??"—"}</td>
+    <td class="mono">${l.tin||0}/${l.tout||0}${l.tcr?`/${l.tcr}`:""}</td>
+    <td class="mono">${l.cost?("$"+l.cost.toFixed(6)):"—"}</td>
+    <td class="mono" title="${esc(l.err||"")}">${esc((l.err||"").slice(0,40))}</td>
+  </tr>`;
+  $("#vLog").innerHTML=`<div class="card"><h3>请求日志 <span class="dim">（内存环最近 200 条 · 全量落盘 request.log）</span></h3>
+    ${err?`<div class="warn">${esc(err)}</div>`:""}
+    <table><tr><th>时间</th><th>协议</th><th>模型</th><th>账号</th><th>状态</th><th>finish</th><th>TTFT</th><th>总耗时</th><th>in/out/cache</th><th>成本</th><th>错误</th></tr>
+    ${logs.length?logs.map(row).join(""):'<tr><td colspan="11" class="dim">暂无请求</td></tr>'}</table></div>`;
 }
 async function loadDiag(){
   const [h,hres]=await Promise.all([api("/health"),fetch("/health",{headers:authHeaders()})]);
   $("#vDiag").innerHTML=`
+  <div class="card"><h3>网关自测 <span class="dim">（真实走 鉴权→账号池→上游 全链路，消耗少量额度；使用窗口=北京 23:00–09:00，窗口外上游可能回 200+空 body，属额度限制非故障）</span></h3>
+    <div class="gta-tabs">
+      <button data-p="openai" class="on" onclick="gtaSetProto('openai')">OpenAI /v1/chat/completions</button>
+      <button data-p="anthropic" onclick="gtaSetProto('anthropic')">Anthropic /v1/messages</button>
+      <button data-p="responses" onclick="gtaSetProto('responses')">Responses /v1/responses</button>
+    </div>
+    <textarea id="gtaBody" class="gta-body" spellcheck="false"></textarea>
+    <div class="gta-row">
+      <button onclick="gtaSend(this)">发送测试</button>
+      <button class="ghost" onclick="gtaAbort()">中止</button>
+      <button class="ghost" onclick="gtaToggleCode()">curl 预览</button>
+    </div>
+    <pre id="gtaCode" class="gta-res" style="display:none"></pre>
+    <div id="gtaRes"></div>
+    <div id="gtaHist" class="gta-hist"></div>
+  </div>
   <div class="card"><h3>健康检查 <span class="dim">GET /health → ${hres.status}</span></h3>
   <pre class="mono">${esc(JSON.stringify(h,null,2))}</pre></div>
   <div class="card"><h3>运维提示</h3><div class="kv">
@@ -94,9 +536,121 @@ async function loadDiag(){
     <b>502（3012）</b><span>system 白名单前缀失效，ZCode 客户端大版本更新后需重新抓包提取 <span class="mono">prefix.json</span></span>
     <b>429</b><span>上游限流/额度耗尽；账号池模式下失败账号会自动冷却换号</span>
   </div></div>`;
+  gtaSetProto("openai");
 }
-load();
-loadDiag();
+const _balCache={};
+let _balFetching=false;
+function balHtml(x){
+  if(!x)return"";
+  if(x.err)return`<span class="warn">${esc(x.err)}</span>`;
+  // 计划块来自 balance 的 data.plans（此前整块没解析）：账号挂在哪个计划、
+  // 状态与有效期；桶行补 capabilities（区分同计划多模型桶）与重置周期。
+  const plans=(x.plans||[]).map(p=>`<div class="dim" style="margin-bottom:3px">${esc(p.name||p.plan_id||"")} · ${esc(p.status||"")}${p.ends_at?" · 计划至 "+esc(p.ends_at):""}</div>`).join("");
+  const es=x.entries||[];
+  if(!es.length)return plans+'<span class="dim">无额度桶</span>';
+  return plans+es.map(e=>{
+    const total=e.total||0,rem=Math.max(0,e.remaining||0);
+    const pct=total?Math.round((total-rem)/total*100):0;
+    const cls=pct>=90?" danger":(pct>=70?" warn":"");
+    const caps=(e.capabilities||[]).map(c=>esc(String(c).replace(/^model:/,""))).join(",");
+    const per=(e.period_start&&e.period_end&&e.period_start!==e.expires_at)?` · 周期 ${esc(e.period_start)}→${esc(e.period_end)}`:"";
+    return `<div class="qwin"><div class="qbar${cls}"><div class="qbar-fill" style="width:${pct}%"></div><span class="qbar-pct${pct>55?" in-fill":""}">${fmtUnits(rem)} / ${fmtUnits(total)}</span></div><div class="qwin-l">${esc(e.model||e.plan||"")}${caps?" · "+caps:""}${e.expires_at?" · 至 "+esc(e.expires_at):""}${per}</div></div>`}).join("")
+}
+async function doBalanceAll(){
+  if(_balFetching)return;_balFetching=true;
+  document.querySelectorAll(".balout[id^=bal_]").forEach(el=>{if(!el.innerHTML)el.innerHTML='<span class="dim">加载中…</span>'});
+  const r=await api("/admin/api/balance");
+  for(const x of r.results||[]){
+    _balCache[x.account]=x;
+    const el=document.getElementById("bal_"+x.account);
+    if(el)el.innerHTML=balHtml(x);
+  }
+  _balFetching=false;
+}
+async function doBalance(btn,label){
+  btn.disabled=true;
+  const r=await api("/admin/api/balance?account="+encodeURIComponent(label));
+  btn.disabled=false;
+  const mine=(r.results||[])[0];
+  if(mine)_balCache[label]=mine;
+  const el=document.getElementById("bal_"+label);
+  if(el)el.innerHTML=mine?balHtml(mine):'<span class="warn">查询失败</span>';
+}
+// 行内展开投放清单：数据源与弹窗一致（/admin/api/touch?account=），再点收起
+async function togglePlans(i,label,btn){
+  const ex=document.getElementById("sub_"+i);
+  if(ex){ex.remove();btn.textContent="▸投放";return}
+  btn.disabled=true;btn.textContent="载入…";
+  const r=await api("/admin/api/touch?account="+encodeURIComponent(label));
+  btn.disabled=false;btn.textContent="▾投放";
+  const x=(r.results||[])[0];
+  let cell;
+  if(!x)cell='<span class="bad">接口无结果返回</span>';
+  else if(x.err)cell=`<span class="bad">${esc(x.err)}</span>`;
+  else{
+    const ds=(x.deliveries||[]).filter(d=>(d.PlanIDs||[]).length);
+    if(ds.length)cell=`<table><tr><th>plan</th><th>位置</th><th>campaign</th><th>操作</th></tr>${ds.map(d=>`<tr><td class="mono ok">${esc(d.PlanIDs.join(", "))}</td><td class="dim">${esc(d.ResourcePosition||"—")}</td><td class="dim mono">${esc((d.CampaignID||"—").slice(0,14))}</td><td><button class="ghost mini" onclick="doClaimRow(this,'${esc(label)}')">领取</button></td></tr>`).join("")}</table>`;
+    else cell=(x.deliveries||[]).length?`<span class="dim">有投放壳但无可领 plan（位置: ${esc((x.deliveries||[]).map(d=>d.ResourcePosition).join(", "))}）</span>`:'<span class="dim">无投放（touch.query 清单为空，服务端名单动态进出）</span>';
+  }
+  const tr=document.createElement("tr");tr.id="sub_"+i;tr.className="subrow";
+  tr.innerHTML=`<td colspan="7">${cell}</td>`;
+  const row=document.getElementById("row_"+i);
+  if(row)row.after(tr);
+}
+// touch 投放是"能不能领"的唯一数据源（preview 通道已删，zcode-hub 同口径）
+async function doTouch(btn,label){
+  btn.disabled=true;
+  const r=await api("/admin/api/touch?account="+encodeURIComponent(label));
+  btn.disabled=false;
+  const x=(r.results||[])[0];
+  if(!x){showModal({title:"投放探测失败",kind:"err",body:"接口无结果返回"});return}
+  if(x.err){showModal({title:label+" — touch 失败",kind:"err",body:esc(x.err)});return}
+  const ds=(x.deliveries||[]).filter(d=>(d.PlanIDs||[]).length);
+  if(!ds.length){showModal({title:label+" — 无投放",kind:"warn",body:"该号当前没有可领取套餐：touch.query 投放清单为空。<br><span class='dim'>投放为服务端动态名单，可稍后再探测。</span>"});return}
+  showModal({title:label+" — 有投放",kind:"ok",body:`<table><tr><th>plan</th><th>位置</th><th>campaign</th></tr>${ds.map(d=>`<tr><td class="mono ok">${esc(d.PlanIDs.join(", "))}</td><td class="dim">${esc(d.ResourcePosition||"—")}</td><td class="dim mono">${esc((d.CampaignID||"—").slice(0,14))}</td></tr>`).join("")}</table><div class="dim" id="cmProg" style="margin-top:8px"></div>`,actions:[
+    {label:"关闭",primary:false},
+    {label:"立即领取",onclick:async(btn)=>{
+      const r=await claimRunWithProgress(label,x=>{btn.textContent=`处理中 ${x.done}/${x.total}`});
+      const x=(r.results||[])[0];
+      closeModal();
+      showModal({title:label+(x&&x.ok?" — 领取完成":" — 未领到"),kind:x&&x.ok?"ok":"warn",body:esc(x?x.message:(r.error||"接口无结果返回"))});
+      doBalanceAll();
+    }}]});
+}
+async function doTouchAll(btn){
+  btn.disabled=true;
+  const r=await api("/admin/api/touch");
+  btn.disabled=false;
+  const res=r.results||[];
+  const hit=res.filter(x=>!x.err&&(x.deliveries||[]).some(d=>(d.PlanIDs||[]).length));
+  showModal({title:`投放探测：${hit.length} / ${res.length} 号有投放`,kind:hit.length?"ok":"warn",body:`<table><tr><th>账号</th><th>投放</th></tr>${res.map(x=>{
+    const ds=(x.deliveries||[]).filter(d=>(d.PlanIDs||[]).length);
+    const cell=x.err?`<span class="bad">${esc(x.err)}</span>`:(ds.length?`<span class="ok mono">${esc(ds.map(d=>d.PlanIDs.join(",")).join(" "))}</span>`:'<span class="dim">无</span>');
+    return `<tr><td class="mono">${esc(x.account)}</td><td>${cell}</td></tr>`}).join("")}</table><div class="dim" id="cmProg" style="margin-top:8px"></div>`,actions:hit.length?[
+    {label:"关闭",primary:false},
+    {label:"领取全部有投放",onclick:async(btn)=>{
+      const r=await claimRunWithProgress("",x=>{btn.textContent=`处理中 ${x.done}/${x.total}`});
+      closeModal();
+      showClaimResults(r.results||[]);
+    }}]:[{label:"关闭",primary:false}]});
+}
+async function doClaimRow(btn,label){
+  btn.disabled=true;const old=btn.textContent;
+  const r=await claimRunWithProgress(label,x=>btn.textContent=`处理中 ${x.done}/${x.total}`);
+  btn.disabled=false;btn.textContent=old;
+  const x=(r.results||[])[0];
+  if(!x){showModal({title:"领取失败",kind:"err",body:esc(r.error||"接口无结果返回")});return}
+  showModal({title:label+(x.ok?" — 领取完成":" — 未领到"),kind:x.ok?"ok":"warn",body:esc(x.message)});
+  doBalanceAll();
+}
+async function doClaimAll(btn){
+  btn.disabled=true;const old=btn.textContent;
+  const r=await claimRunWithProgress("",x=>btn.textContent=`处理中 ${x.done}/${x.total}`);
+  btn.disabled=false;btn.textContent=old;
+  showClaimResults(r.results||[]);
+}
+setInterval(()=>{const cb=document.getElementById("auto");if(cb&&cb.checked&&$("#login").style.display!=="flex")loadAll()},60000);
+loadAll();
 </script>
 </body>
 </html>
