@@ -148,8 +148,8 @@ pre.acc-pre{white-space:pre-wrap;word-break:break-all;font:12px var(--mono);back
 <div id="login">
   <div class="login-card">
     <h1>ZCODE·GW</h1>
-    <p>输入管理 API Key 登录</p>
-    <input type="password" id="lk" placeholder="API Key" onkeydown="if(event.key==='Enter')doLogin()">
+    <p>输入管理员密码登录</p>
+    <input type="password" id="lk" placeholder="管理员密码" onkeydown="if(event.key==='Enter')doLogin()">
     <button onclick="doLogin()">登录</button>
     <div id="lerr"></div>
   </div>
@@ -248,7 +248,7 @@ function showLogin(err){
   setTimeout(()=>document.getElementById("lk").focus(),50)}
 function doLogin(){
   const v=document.getElementById("lk").value.trim();
-  if(!v){$("#lerr").textContent="请输入 API Key";return}
+  if(!v){$("#lerr").textContent="请输入管理员密码";return}
   localStorage.zc_apikey=v;$("#lerr").textContent="";
   $("#login").style.display="none";
   loadAll()}
@@ -270,7 +270,7 @@ async function loadAll(){
   const [o,h]=await Promise.all([api("/admin/api/overview"),fetch("/health",{headers:authHeaders()}).then(r=>r.json()).catch(()=>null)]);
   if(!o.credential){
     const err=o.error,msg=typeof err==="object"?(err&&err.message||JSON.stringify(err)):String(err||"");
-    if(/invalid api key/i.test(msg)||!localStorage.zc_apikey){setDot("off","未登录");showLogin(localStorage.zc_apikey?"API Key 无效，请重新登录":"");return}
+    if(/invalid api key/i.test(msg)||!localStorage.zc_apikey){setDot("off","未登录");showLogin(localStorage.zc_apikey?"密码无效，请重新登录":"");return}
     setDot("run","网关异常");
     $("#vMain").innerHTML='<div class="card bad">overview 加载失败'+(msg?" — "+esc(msg):"")+"</div>";return}
   const c=o.credential;

@@ -20,6 +20,9 @@ type Config struct {
 	Models        []string `json:"models"`
 	ModelAlias    map[string]string
 	APIKey        string // 本服务自身的入口 key，空 = 不鉴权
+	// AdminPassword 管理面板（/admin）登录密码：与 API_KEY 独立——面板凭据不复用
+	// 供模型调用的 key，避免把对话密钥抄进浏览器 localStorage。空 = 不鉴权（本机自用）。
+	AdminPassword string `json:"admin_password"`
 	RequestLog    string
 	// TotalTimeoutSecs 单次上游请求（含响应体读取）的整体超时兜底；
 	// 0 = 关闭。对齐 zcode-switch 网关 total_timeout_secs。
@@ -103,6 +106,7 @@ func Load() (*Config, error) {
 	}
 
 	setdefault(&cfg.APIKey, "API_KEY", "")
+	setdefault(&cfg.AdminPassword, "ADMIN_PASSWORD", cfg.AdminPassword)
 	setdefault(&cfg.TokenSource, "ZCODE_TOKEN", cfg.TokenSource)
 	setdefault(&cfg.DumpDir, "DUMP_DIR", cfg.DumpDir)
 	if v := os.Getenv("DUMP"); v == "0" {

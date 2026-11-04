@@ -20,7 +20,7 @@ type StatsFn func() map[string]int64
 // Overview 构造 GET /admin/api/overview。
 func Overview(cfg *config.Config, client *zcode.Client, stats StatsFn) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !authed(w, r, cfg.APIKey) {
+		if !authed(w, r, cfg) {
 			return
 		}
 		cred := map[string]any{"valid": false, "mode": "none", "notice": ""}
@@ -86,7 +86,7 @@ func sortedLabels(claims map[string]string) []string {
 // （与 claim 同一套头组与 device_mid 状态目录），面板行内"余额"按钮的数据源。
 func BalanceHandler(cfg *config.Config, client *zcode.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !authed(w, r, cfg.APIKey) {
+		if !authed(w, r, cfg) {
 			return
 		}
 		claims := collectClaims(client, r.URL.Query().Get("account"))
@@ -113,7 +113,7 @@ func BalanceHandler(cfg *config.Config, client *zcode.Client) http.HandlerFunc {
 // 投放清单（可领信号的前置数据源，与 ClaimBestForToken 主路径同源）。
 func TouchHandler(cfg *config.Config, client *zcode.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !authed(w, r, cfg.APIKey) {
+		if !authed(w, r, cfg) {
 			return
 		}
 		claims := collectClaims(client, r.URL.Query().Get("account"))
@@ -134,8 +134,14 @@ func TouchHandler(cfg *config.Config, client *zcode.Client) http.HandlerFunc {
 	}
 }
 
-// authed 与 server.checkAuth 同语义：key 为空放行；否则 Bearer 或 x-api-key 任一命中。
-func authed(w http.ResponseWriter, r *http.Request, key string) bool {
+// authed 面板鉴权：admin_password 优先（面板专用凭据，不复用模型调用 key）；
+// 未设密码时回落 api_key（向后兼容）；两者都空 = 不鉴权（本机自用）。
+// Bearer 或 x-api-key 任一命中。
+func authed(w http.ResponseWriter, r *http.Request, cfg *config.Config) bool {
+	key := cfg.AdminPassword
+	if key == "" {
+		key = cfg.APIKey
+	}
 	if key == "" {
 		return true
 	}
@@ -161,7 +167,7 @@ func authed(w http.ResponseWriter, r *http.Request, key string) bool {
 // 面板「请求日志」页数据源——此前日志只落 request.log，admin 面板看不到。
 func LogsHandler(cfg *config.Config, recent func(n int) []zcode.RequestLog) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !authed(w, r, cfg.APIKey) {
+		if !authed(w, r, cfg) {
 			return
 		}
 		n := 200

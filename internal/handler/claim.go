@@ -1,6 +1,8 @@
-// 套餐领取端点：POST /admin/api/claim（?preview=1 只列不领）。对账号池里
-// 每个账号跑一遍 激活上报 → preview → 领最高优先级，逐账号返回结果。
-// ClaimAll 供 main 的每日自动领取复用。
+// 套餐领取：POST /admin/api/claim 起后台任务（?account= 单号），立即返回
+// task_id；GET /admin/api/claim/progress?id= 轮询逐号进度。领取链每号都要跑
+// 激活上报→touch→验证码求解（node 子进程）→claim，全部账号串行可达分钟级，
+// 同步 HTTP 等待会表现为前端永久"处理中"，因此任务化。
+// ClaimAll/ClaimAllProgress 供 main 的每日自动领取复用。
 package handler
 
 import (
@@ -8,6 +10,10 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"zcode2api/internal/config"
@@ -22,51 +28,108 @@ var claimStateDir = func() string {
 	return filepath.Dir(zcode.LocalTokenPath())
 }
 
-// ClaimAll 对池内（或单账号）全部 token 各领一轮，返回逐账号结果。
-func ClaimAll(cfg *config.Config, client *zcode.Client, previewOnly bool) []zcode.ClaimResult {
-	out := []zcode.ClaimResult{}
-	claims := map[string]string{} // label -> token
+// claimTargets 领取目标账号列表（与 ClaimAll 的选择逻辑一致，用于预估 total）。
+func claimTargets(client *zcode.Client, only string) []string {
+	labels := []string{}
 	if client.Pool != nil {
 		for _, acc := range client.Pool.Accounts {
-			if acc.Token != "" {
-				claims[acc.Label] = acc.Token
+			if acc.Token != "" && (only == "" || acc.Label == only) {
+				labels = append(labels, acc.Label)
 			}
 		}
-	} else if client.Token != "" {
-		claims["default"] = client.Token
+	} else if client.Token != "" && only == "" {
+		labels = append(labels, "default")
 	}
+	return labels
+}
+
+// ClaimAllProgress 逐账号领取，每完成一个回调 res（面板任务用它更新进度）。
+// only 非空时只跑指定 label；onResult 可为 nil。
+func ClaimAllProgress(cfg *config.Config, client *zcode.Client, previewOnly bool, only string, onResult func(zcode.ClaimResult)) []zcode.ClaimResult {
+	out := []zcode.ClaimResult{}
+	emit := func(r zcode.ClaimResult) {
+		out = append(out, r)
+		if onResult != nil {
+			onResult(r)
+		}
+	}
+	targets := claimTargets(client, only)
 	stateDir := claimStateDir()
-	for label, jwt := range claims {
+	for _, label := range targets {
+		var jwt string
+		if client.Pool != nil {
+			for _, acc := range client.Pool.Accounts {
+				if acc.Label == label {
+					jwt = acc.Token
+				}
+			}
+		} else {
+			jwt = client.Token
+		}
 		mid := zcode.StableDeviceMid(stateDir, jwt)
 		if previewOnly {
-			plans, err := zcode.PreviewPlans(claimHTTP, jwt, mid)
+			// 只看可领也走 touch：preview 通道已整体删除（zcode-hub 实测恒空）
+			dels, err := zcode.TouchPlans(claimHTTP, jwt, mid)
 			if err != nil {
-				out = append(out, zcode.ClaimResult{Account: label, OK: false, Message: "preview 失败: " + err.Error()})
+				emit(zcode.ClaimResult{Account: label, OK: false, Message: "touch 失败: " + err.Error()})
 				continue
 			}
-			msg := "现在没有可领取的套餐"
-			if len(plans) > 0 {
-				best := plans[0]
-				for _, p := range plans[1:] {
-					if p.Priority > best.Priority {
-						best = p
-					}
-				}
-				msg = "可领: " + zcode.DescribePlan(best)
+			n := 0
+			var ids []string
+			for _, d := range dels {
+				ids = append(ids, d.PlanIDs...)
+				n += len(d.PlanIDs)
 			}
-			out = append(out, zcode.ClaimResult{Account: label, OK: true, Message: msg})
+			msg := "现在没有可领取的套餐（touch 无投放）"
+			if n > 0 {
+				msg = "可领 " + strconv.Itoa(n) + " 个投放套餐: " + strings.Join(ids, ",")
+			}
+			emit(zcode.ClaimResult{Account: label, OK: true, Message: msg})
 			continue
 		}
 		msg, _ := zcode.ClaimBestForToken(claimHTTP, jwt, mid)
-		out = append(out, zcode.ClaimResult{Account: label, OK: true, Message: msg})
+		emit(zcode.ClaimResult{Account: label, OK: true, Message: msg})
 	}
 	return out
 }
 
-// ClaimHandler POST /admin/api/claim。?preview=1 只列不领。
+// ClaimAll 同步版本（main 的定时领取用，无进度回调）。
+func ClaimAll(cfg *config.Config, client *zcode.Client, previewOnly bool, only string) []zcode.ClaimResult {
+	return ClaimAllProgress(cfg, client, previewOnly, only, nil)
+}
+
+// claimTask 一次领取任务的运行状态。
+type claimTask struct {
+	id      string
+	total   int
+	created time.Time
+	done    atomic.Int64
+	running atomic.Bool
+	mu      sync.Mutex
+	results []zcode.ClaimResult
+}
+
+func (t *claimTask) add(r zcode.ClaimResult) {
+	t.mu.Lock()
+	t.results = append(t.results, r)
+	t.mu.Unlock()
+	t.done.Add(1)
+}
+
+func (t *claimTask) snapshot() ([]zcode.ClaimResult, int64, bool) {
+	t.mu.Lock()
+	res := append([]zcode.ClaimResult{}, t.results...)
+	t.mu.Unlock()
+	return res, t.done.Load(), t.running.Load()
+}
+
+// claimTasks 活任务表；新任务注册时懒清理 30 分钟以上的旧任务。
+var claimTasks sync.Map
+
+// ClaimHandler POST /admin/api/claim。?preview=1 只列不领；?account=label 只跑单号。
 func ClaimHandler(cfg *config.Config, client *zcode.Client, log *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !authed(w, r, cfg.APIKey) {
+		if !authed(w, r, cfg) {
 			return
 		}
 		if r.Method != http.MethodPost {
@@ -74,11 +137,47 @@ func ClaimHandler(cfg *config.Config, client *zcode.Client, log *slog.Logger) ht
 			return
 		}
 		previewOnly := r.URL.Query().Get("preview") == "1"
-		results := ClaimAll(cfg, client, previewOnly)
-		if log != nil {
-			log.Info("套餐领取完成", slog.Bool("preview", previewOnly), slog.Int("accounts", len(results)))
+		only := r.URL.Query().Get("account")
+		total := len(claimTargets(client, only))
+		t := &claimTask{id: zcode.UUIDv4()[:12], total: total, created: time.Now()}
+		t.running.Store(true)
+		now := time.Now()
+		claimTasks.Range(func(k, v any) bool {
+			if tk, ok := v.(*claimTask); ok && now.Sub(tk.created) > 30*time.Minute {
+				claimTasks.Delete(k)
+			}
+			return true
+		})
+		claimTasks.Store(t.id, t)
+		go func() {
+			defer t.running.Store(false)
+			ClaimAllProgress(cfg, client, previewOnly, only, t.add)
+			if log != nil {
+				log.Info("套餐领取任务完成", slog.String("task", t.id), slog.Bool("preview", previewOnly), slog.Int("accounts", total))
+			}
+		}()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "task_id": t.id, "total": total})
+	}
+}
+
+// ClaimProgressHandler GET /admin/api/claim/progress?id=xx 轮询领取任务。
+func ClaimProgressHandler(cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !authed(w, r, cfg) {
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "results": results})
+		v, ok := claimTasks.Load(r.URL.Query().Get("id"))
+		if !ok {
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "task not found"})
+			return
+		}
+		t := v.(*claimTask)
+		res, done, running := t.snapshot()
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"task_id": t.id, "total": t.total, "done": done,
+			"running": running, "results": res,
+		})
 	}
 }
