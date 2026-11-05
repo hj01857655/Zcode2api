@@ -1,3 +1,4 @@
+
 package zcode
 
 // 多账号池：token.json 存账号数组，按顺序选号，失败账号进入冷却。
@@ -40,6 +41,14 @@ type Pool struct {
 	// sticky 会话亲和：key（metadata.user_id）→ label。绑定号可用则固定
 	// 同号（上下文缓存命中率高），失效（冷却/删除）才轮转重绑。
 	sticky map[string]string
+	// stickyOrder LRU 淘汰序：按绑定时间排列的 key，表满时逐出最旧绑定
+	// （替代整体清空——避免所有活跃会话同时丢缓存亲和重绑）。
+	stickyOrder []string
+	// path token.json 路径：池模式 401 时热重读（CLI/GUI 在别的进程重登
+	// 后凭据已刷新，网关无需重启）。
+	path string
+	// reloadOn401 池模式热重读开关：单账号模式走 Client.Token 路径，不启用
+	reloadOn401 bool
 }
 
 // 熔断参数（对齐 Rust：TRIP_WINDOW=10 / 80% / TRIP_COOLDOWN=10min / 连败 5）。
@@ -57,8 +66,9 @@ type poolFile struct {
 
 // LoadPool 读 token.json；文件不存在返回空池（不报错）。
 // 兼容两种形状：新 {"accounts":[...]} 与旧 {"provider","token","saved_at"}。
+// path 记入池：池模式 401 时热重读（ReloadIfPoolStale）。
 func LoadPool(path string) *Pool {
-	p := &Pool{cool: map[string]time.Time{}, hist: map[string][]bool{}, failStreak: map[string]int{}, sticky: map[string]string{}}
+	p := &Pool{cool: map[string]time.Time{}, hist: map[string][]bool{}, failStreak: map[string]int{}, sticky: map[string]string{}, path: path}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return p
@@ -78,6 +88,49 @@ func LoadPool(path string) *Pool {
 		p.Active = one.Label
 	}
 	return p
+}
+
+// ReloadPoolStale 公开入口（锁内调 ReloadIfPoolStale）：池模式 401 热重读。
+func (p *Pool) ReloadPoolStale() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.ReloadIfPoolStale()
+}
+
+// ReloadIfPoolStale 池模式 401 热重读：磁盘 token.json 与当前池内容不同时
+// 整体替换账号表（CLI/GUI 在别的进程重登后凭据已刷新）。返回是否替换。
+// 只在池模式调用（单账号走 Client.Token 路径）。调用方须持 p.mu。
+func (p *Pool) ReloadIfPoolStale() bool {
+	if p.path == "" {
+		return false
+	}
+	raw, err := os.ReadFile(p.path)
+	if err != nil {
+		return false
+	}
+	var pf poolFile
+	if json.Unmarshal(raw, &pf) != nil || len(pf.Accounts) == 0 {
+		return false
+	}
+	if len(pf.Accounts) == len(p.Accounts) {
+		same := true
+		for i := range pf.Accounts {
+			if pf.Accounts[i].Label != p.Accounts[i].Label || pf.Accounts[i].Token != p.Accounts[i].Token {
+				same = false
+				break
+			}
+		}
+		if same {
+			return false // 无变化：不是吊销，是别的问题
+		}
+	}
+	p.Accounts = pf.Accounts
+	p.Active = pf.Active
+	p.cool = map[string]time.Time{}  // 新凭据新状态
+	p.hist = map[string][]bool{}
+	p.failStreak = map[string]int{}
+	// sticky 保留 label 映射（同 label 的会话继续命中，凭据已在 Accounts 里换新）
+	return true
 }
 
 func defaultLabel(provider string) string {
@@ -227,13 +280,11 @@ func (p *Pool) PickSticky(key string) (Account, bool) {
 			continue
 		}
 		p.cursor = (idx + 1) % n
-		if len(p.sticky) >= stickyLimit {
-			p.sticky = map[string]string{}
-		}
-		p.sticky[key] = a.Label
+		p.bindSticky(key, a.Label)
 		return a, true
 	}
-	// 全冷却：取最早解冻的并绑定
+	// 全冷却：从最早解冻的号起轮转绑定（雷群效应修复）——所有新会话
+	// 落在不同号上，解冻瞬间不会全部挤到同一个号
 	best, bestUntil := 0, time.Time{}
 	for i, a := range p.Accounts {
 		if until, cool := p.cool[a.Label]; cool {
@@ -242,13 +293,26 @@ func (p *Pool) PickSticky(key string) (Account, bool) {
 			}
 		}
 	}
+	a := p.Accounts[(best+len(p.sticky))%n] // 按 sticky 数量偏移：新会话错开落号
 	p.cursor = (best + 1) % n
-	a := p.Accounts[best]
-	if len(p.sticky) >= stickyLimit {
-		p.sticky = map[string]string{}
-	}
-	p.sticky[key] = a.Label
+	p.bindSticky(key, a.Label)
 	return a, true
+}
+
+// bindSticky 写绑定表：LRU 逐出最旧绑定（stickyOrder 维护插入序）。
+// 调用方须持 p.mu。
+func (p *Pool) bindSticky(key, label string) {
+	if _, exists := p.sticky[key]; !exists {
+		p.stickyOrder = append(p.stickyOrder, key)
+	}
+	p.sticky[key] = label
+	for len(p.sticky) > stickyLimit && len(p.stickyOrder) > 0 {
+		oldest := p.stickyOrder[0]
+		p.stickyOrder = p.stickyOrder[1:]
+		if _, ok := p.sticky[oldest]; ok {
+			delete(p.sticky, oldest)
+		}
+	}
 }
 
 // Cooldown 让某账号冷却一段时间。

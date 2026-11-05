@@ -505,7 +505,7 @@ func TranslateSSELine(payload string) *Delta {
 }
 
 // CompletionFrame 非流式聚合结果 → OpenAI chat.completion（model 为映射后的上游模型名）。
-func CompletionFrame(id, model, text, reasoning, finish string, in, out float64) map[string]any {
+func CompletionFrame(id, model, text, reasoning, finish string, in, out int) map[string]any {
 	msg := map[string]any{"role": "assistant", "content": text}
 	if reasoning != "" {
 		msg["reasoning_content"] = reasoning

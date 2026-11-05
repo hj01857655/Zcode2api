@@ -323,8 +323,9 @@ func responsesObjectWithTools(id, model, text, status string, in, out int, tc *t
 
 // aggregateResponses 非流式：聚合上游 SSE → 单个 response 对象。
 func (s *Server) aggregateResponses(w http.ResponseWriter, obs *zcode.Obs, model string, body []byte) {
-	resp, err := s.upstreamMessages(body)
+	resp, account, err := s.upstreamMessages(body)
 	if err != nil {
+		obs.SetAccount(account)
 		obs.Done(502, upStatusOf(err), "error", 0, 0, 0, 0, err.Error())
 		if ue, ok := err.(*zcode.UpstreamError); ok {
 			s.mapUpstreamError(w, ue.Status, ue.Body)
@@ -378,12 +379,13 @@ func (s *Server) aggregateResponses(w http.ResponseWriter, obs *zcode.Obs, model
 		tcPtr = acc
 	}
 	_ = json.NewEncoder(w).Encode(responsesObjectWithTools("resp_"+zcode.UUIDv4()[:24], model, text, "completed", int(in), int(out), tcPtr))
+	obs.SetAccount(account)
 	obs.Done(200, resp.StatusCode, "completed", int64(in), int64(out), int64(tcr), int64(tcw), "")
 }
 
 // streamResponses 流式：Anthropic SSE → Responses 事件集。
 func (s *Server) streamResponses(w http.ResponseWriter, obs *zcode.Obs, model string, body []byte) {
-	resp, err := s.upstreamMessages(body)
+	resp, account, err := s.upstreamMessages(body)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	if err != nil {
@@ -452,6 +454,7 @@ func (s *Server) streamResponses(w http.ResponseWriter, obs *zcode.Obs, model st
 			finish = d.Finish
 		}
 		if d.ErrText != "" {
+			obs.SetAccount(account)
 			obs.Done(200, resp.StatusCode, "error", int64(in), int64(out), int64(tcr), int64(tcw), d.ErrText)
 			sse(w, map[string]any{"type": "error", "error": map[string]any{"message": truncate(d.ErrText, 400)}})
 			return
@@ -495,6 +498,7 @@ func (s *Server) streamResponses(w http.ResponseWriter, obs *zcode.Obs, model st
 		},
 	})
 	sse(w, map[string]any{"type": "response.completed", "response": obj})
+	obs.SetAccount(account)
 	obs.Done(200, resp.StatusCode, finish, int64(in), int64(out), int64(tcr), int64(tcw), "")
 }
 

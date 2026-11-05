@@ -106,8 +106,9 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 
 // aggregateMessages 非流式：聚合上游 SSE → Anthropic message 形状。
 func (s *Server) aggregateMessages(w http.ResponseWriter, obs *zcode.Obs, model string, body []byte) {
-	resp, err := s.upstreamMessages(body)
+	resp, account, err := s.upstreamMessages(body)
 	if err != nil {
+		obs.SetAccount(account)
 		obs.Done(502, upStatusOf(err), "error", 0, 0, 0, 0, err.Error())
 		if ue, ok := err.(*zcode.UpstreamError); ok {
 			s.mapUpstreamError(w, ue.Status, ue.Body)
@@ -195,13 +196,15 @@ func (s *Server) aggregateMessages(w http.ResponseWriter, obs *zcode.Obs, model 
 		"model": model, "content": content, "stop_reason": stop, "stop_sequence": nil,
 		"usage": map[string]any{"input_tokens": in, "output_tokens": out},
 	})
+	obs.SetAccount(account)
 	obs.Done(200, resp.StatusCode, stop, int64(in), int64(out), int64(tcr), int64(tcw), "")
 }
 
 // passthroughMessages 流式：原样透传上游 SSE 字节流。
 func (s *Server) passthroughMessages(w http.ResponseWriter, obs *zcode.Obs, body []byte) {
-	resp, err := s.upstreamMessages(body)
+	resp, account, err := s.upstreamMessages(body)
 	if err != nil {
+		obs.SetAccount(account)
 		obs.Done(502, upStatusOf(err), "error", 0, 0, 0, 0, err.Error())
 		if ue, ok := err.(*zcode.UpstreamError); ok {
 			s.mapUpstreamError(w, ue.Status, ue.Body)
@@ -230,11 +233,13 @@ func (s *Server) passthroughMessages(w http.ResponseWriter, obs *zcode.Obs, body
 		if n > 0 {
 			obs.FirstByte() // 透传流无解析：首字节近似 TTFT；usage/finish 不可得记 0
 			if _, werr := lk.Write(buf[:n]); werr != nil {
+				obs.SetAccount(account)
 				obs.Done(200, resp.StatusCode, "", 0, 0, 0, 0, "client write: "+werr.Error())
 				return
 			}
 		}
 		if err != nil {
+			obs.SetAccount(account)
 			obs.Done(200, resp.StatusCode, "", 0, 0, 0, 0, "")
 			return
 		}

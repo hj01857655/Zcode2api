@@ -122,48 +122,70 @@ func stickyKey(body []byte) string {
 // 语义对齐终版 server.py：无论下游请求流式与否，上游一律 stream=true，
 // 非流式由 handler 聚合——绕开 stream:false 的未知行为。
 // Messages 发送 anthropic 协议 body，返回上游响应。
-// Pool 非 nil 时按池选号；遇到 401/429/3012 自动冷却该账号并换下一个重试（最多一轮）。
-func (c *Client) Messages(body []byte) (*http.Response, error) {
+// Pool 非 nil 时按池选号；遇到 401/429/3012/3008 自动冷却该账号并换下一个重试（最多一轮）。
+// 池模式 401 先尝试热重读 token.json（CLI/GUI 别进程重登后凭据已刷新），读到新凭据重试。
+// 200+JSON 业务错误体（非 SSE，如 1005 exceed quota）转 UpstreamError——
+// 与 hub 网关 11-04 修复同根：这种错误体被当流解析会让客户端拿到空 content 的 200。
+// AccountField 返回实际命中的账号 label（单账号模式为空）——日志记账用：
+// Obs 在 handler 构造时还不知道选了哪个号，请求结束后由调用方回填。
+func (c *Client) MessagesWithAccount(body []byte) (*http.Response, string, error) {
 	if c.Pool == nil || c.Pool.Size() == 0 {
-		return c.send(c.Token, body)
+		resp, err := c.send(c.Token, body)
+		return resp, "", err
 	}
 	tries := c.Pool.Size()
 	if tries < 1 {
 		tries = 1
 	}
 	var lastErr error
+	lastLabel := ""
 	for i := 0; i < tries; i++ {
 		acc, ok := c.Pool.PickSticky(stickyKey(body)) // 会话亲和：同 user_id 固定同号
 		if !ok {
 			break // 全局风控闸或全冷却：fail-fast
 		}
+		lastLabel = acc.Label
 		resp, err := c.send(acc.Token, body)
 		if err == nil {
 			c.Pool.Settle(acc.Label, true)
-			return resp, nil
+			return resp, acc.Label, nil
 		}
 		lastErr = err
 		if ue, ok := err.(*UpstreamError); ok {
+			// 池模式 401：先热重读 token.json，拿到新凭据重试本轮
+			if ue.Status == http.StatusUnauthorized && c.Pool.ReloadPoolStale() {
+				continue
+			}
 			d := cooldownFor(ue)
 			_ = c.Pool.Settle(acc.Label, false) // 熔断双闸记账（窗口/连败）
 			if d > 0 {
 				c.Pool.Cooldown(acc.Label, d)
-				// IP 级风控（405/3012）：设全局退避闸，其余号不再排队挨撞
-				if ue.Status == http.StatusMethodNotAllowed || strings.Contains(ue.Body, "3012") {
+				// IP 级风控（405/3012）与用户级并发上限（3008/3009/3010）都设
+				// 全局退避闸——3008 是 user 级限制，换号同样撞，排队只烧重试轮次
+				if ue.Status == http.StatusMethodNotAllowed || strings.Contains(ue.Body, "3012") ||
+					strings.Contains(ue.Body, "3008") || strings.Contains(ue.Body, "3009") || strings.Contains(ue.Body, "3010") {
 					c.Pool.SetGlobalBackoff(d)
 				}
 				continue // 换下一个账号
 			}
 		}
-		return nil, err // 非可重试错误（400/405 等）直接返回
+		return nil, lastLabel, err // 非可重试错误（400/405 等）直接返回
 	}
 	if lastErr == nil {
 		lastErr = &UpstreamError{Status: 503, Body: "no available account"}
 	}
-	return nil, lastErr
+	return nil, lastLabel, lastErr
+}
+
+// Messages 兼容入口（不回填账号）：内部走 MessagesWithAccount。
+func (c *Client) Messages(body []byte) (*http.Response, error) {
+	resp, _, err := c.MessagesWithAccount(body)
+	return resp, err
 }
 
 // cooldownFor 按上游错误决定冷却时长；0 = 不冷却（不换号）。
+// 1005（exceed quota limit）以 HTTP 200 包 JSON 返回，body 含 "1005"：
+// 额度耗尽是确定性拒绝，10 分钟长冷却防止短冷却下无限重打（对齐 hub 同日修复）。
 func cooldownFor(ue *UpstreamError) time.Duration {
 	switch {
 	case ue.Status == http.StatusUnauthorized:
@@ -172,6 +194,8 @@ func cooldownFor(ue *UpstreamError) time.Duration {
 		return 60 * time.Second // 限流/额度
 	case ue.Status == http.StatusMethodNotAllowed || strings.Contains(ue.Body, "3012"):
 		return 10 * time.Minute // 风控
+	case strings.Contains(ue.Body, "1005"):
+		return 10 * time.Minute // exceed quota（200 包 JSON）
 	case strings.Contains(ue.Body, "3008") || strings.Contains(ue.Body, "3009") || strings.Contains(ue.Body, "3010"):
 		return 60 * time.Second // 并发上限
 	}
@@ -199,6 +223,19 @@ func (c *Client) send(token string, body []byte) (*http.Response, error) {
 			c.Dump("resp", "err", resp.StatusCode, raw)
 		}
 		return nil, &UpstreamError{Status: resp.StatusCode, Body: string(raw)}
+	}
+	// 200+JSON 业务错误体识别（与 hub 网关 11-04 修复同根）：上游计费/风控闸
+	// 偶尔以 HTTP 200 包 JSON 错误返回（{"code":1005,"msg":"exceed quota limit"}）。
+	// content-type 判 JSON → 转 UpstreamError（Status 200 + 原始 body），让上层
+	// 走冷却/换号/错误映射，而不是被当 SSE 流解析出空 content 的 200。
+	ct := resp.Header.Get("Content-Type")
+	if strings.Contains(ct, "json") {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		resp.Body.Close()
+		if c.Dump != nil {
+			c.Dump("resp", "err-200json", 200, raw)
+		}
+		return nil, &UpstreamError{Status: http.StatusOK, Body: string(raw)}
 	}
 	return resp, nil
 }

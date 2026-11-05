@@ -361,6 +361,7 @@ func isClaimedToday(jwt, planID string) bool {
 }
 
 // markClaimed 记一笔当日已领（claim code=0 或服务端 1003 时调用）。
+// 原子写：tmp+rename（与 Pool.Save 同构）——写一半崩溃不损坏当日台账。
 func markClaimed(jwt, planID string) {
 	ledgerMu.Lock()
 	defer ledgerMu.Unlock()
@@ -373,7 +374,10 @@ func markClaimed(jwt, planID string) {
 	}
 	l.Claims[k] = append(l.Claims[k], planID)
 	if raw, err := json.MarshalIndent(l, "", "  "); err == nil {
-		_ = os.WriteFile(l.path(), raw, 0o600)
+		tmp := l.path() + ".tmp"
+		if err := os.WriteFile(tmp, raw, 0o600); err == nil {
+			_ = os.Rename(tmp, l.path())
+		}
 	}
 }
 

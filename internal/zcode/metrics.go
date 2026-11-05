@@ -156,6 +156,15 @@ func (o *Obs) FirstByte() {
 	o.TTFTMs = time.Since(o.Start).Milliseconds()
 }
 
+// SetAccount 补记命中账号（池模式在 Client.Messages 内部选号后才可知，
+// handler 构造 Obs 时还不知道——请求成功/失败收尾前回填）。幂等。
+func (o *Obs) SetAccount(label string) {
+	if o == nil || label == "" {
+		return
+	}
+	o.Account = label
+}
+
 // Done 请求收尾：写日志（含 cost 折算）。
 func (o *Obs) Done(status, upStatus int, finish string, tin, tout, tcr, tcw int64, errText string) {
 	if o == nil || o.Log == nil {

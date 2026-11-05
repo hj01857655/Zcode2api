@@ -113,7 +113,14 @@ func serve() {
 
 	addr := "127.0.0.1:" + strconv.Itoa(cfg.Port)
 	log.Printf("ZCode2api-go 监听 http://%s （upstream=%s）", addr, cfg.Upstream)
-	log.Fatal(http.ListenAndServe(addr, srv.Handler()))
+	// ReadHeaderTimeout 防 slowloris（慢速发头占连接）：5s 对本地/内网足够宽裕；
+	// 不设 ReadTimeout/WriteTimeout——SSE 流式回答持续几分钟是正常形态
+	httpSrv := &http.Server{
+		Addr:              addr,
+		Handler:           srv.Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	log.Fatal(httpSrv.ListenAndServe())
 }
 
 // claimSlots 每天尝试领取的时刻（距 00:00 的分钟数，北京时间 zcode.CST8）。

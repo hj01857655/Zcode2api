@@ -97,10 +97,11 @@ func startKeepalive(lk *sseLock, interval time.Duration) func() {
 // upstreamMessages 发上游请求；401 时尝试重读 token 并重试一次
 // （CLI/GUI 在别的进程重登后 credentials.json 已刷新，网关无需重启）。
 // 重试只发生在向下游写出任何字节之前，流式/非流式都安全。
-func (s *Server) upstreamMessages(body []byte) (*http.Response, error) {
-	resp, err := s.Client.Messages(body)
+// 返回值多带 account：池模式实际命中的账号 label（日志记账回填 Obs 用）。
+func (s *Server) upstreamMessages(body []byte) (*http.Response, string, error) {
+	resp, account, err := s.Client.MessagesWithAccount(body)
 	if err == nil {
-		return resp, nil
+		return resp, account, nil
 	}
 	if ue, ok := err.(*zcode.UpstreamError); ok && ue.Status == http.StatusUnauthorized && s.Client.Pool == nil {
 		loader := s.TokenLoader
@@ -109,10 +110,11 @@ func (s *Server) upstreamMessages(body []byte) (*http.Response, error) {
 		}
 		if tok := loader(); tok != "" && tok != s.Client.Token {
 			s.Client.Token = tok
-			return s.Client.Messages(body)
+			resp, _, err = s.Client.MessagesWithAccount(body)
+			return resp, "", err // 单账号热替换后重试：无池账号标签
 		}
 	}
-	return resp, err
+	return resp, account, err
 }
 
 // Handler 返回根 mux。
@@ -348,8 +350,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAuth(w, r) {
 		return
 	}
+	// 32MB body 上限：与 messages/responses 两端点同口径（大上下文对话放行，
+	// 防 oversized body 打爆聚合缓冲）
 	var req zcode.ChatRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 32<<20)).Decode(&req); err != nil {
 		errJSON(w, http.StatusBadRequest, "invalid json", "invalid_request_error")
 		return
 	}
@@ -368,8 +372,9 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 // aggregateChat 非流式：消费上游 SSE 聚合为单个 chat.completion（对齐 _collect_sse 路径）。
 func (s *Server) aggregateChat(w http.ResponseWriter, obs *zcode.Obs, model string, body []byte) {
-	resp, err := s.upstreamMessages(body)
+	resp, account, err := s.upstreamMessages(body)
 	if err != nil {
+		obs.SetAccount(account)
 		obs.Done(502, upStatusOf(err), "error", 0, 0, 0, 0, err.Error())
 		if ue, ok := err.(*zcode.UpstreamError); ok {
 			s.mapUpstreamError(w, ue.Status, ue.Body)
@@ -383,7 +388,7 @@ func (s *Server) aggregateChat(w http.ResponseWriter, obs *zcode.Obs, model stri
 
 	text, reasoning, finish := "", "", ""
 	acc := newToolAccum()
-	var in, out, tcr, tcw float64
+	var in, out, tcr, tcw int
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 64*1024), 8*1024*1024)
 	for sc.Scan() {
@@ -405,16 +410,16 @@ func (s *Server) aggregateChat(w http.ResponseWriter, obs *zcode.Obs, model stri
 			obs.FirstByte()
 		}
 		if d.UsageIn != nil {
-			in = *d.UsageIn
+			in = int(*d.UsageIn)
 		}
 		if d.UsageOut != nil {
-			out = *d.UsageOut
+			out = int(*d.UsageOut)
 		}
 		if d.CacheRead != nil {
-			tcr = *d.CacheRead
+			tcr = int(*d.CacheRead)
 		}
 		if d.CacheCreation != nil {
-			tcw = *d.CacheCreation
+			tcw = int(*d.CacheCreation)
 		}
 		if d.Role != "" {
 			// message_start 的 role 帧：帧本身不转发，只贡献上面的 input usage
@@ -450,6 +455,7 @@ func (s *Server) aggregateChat(w http.ResponseWriter, obs *zcode.Obs, model stri
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(frame)
+	obs.SetAccount(account)
 	obs.Done(200, resp.StatusCode, finish, int64(in), int64(out), int64(tcr), int64(tcw), "")
 }
 
@@ -461,7 +467,7 @@ func upStatusOf(err error) int {
 	return 0
 }
 func (s *Server) streamChat(w http.ResponseWriter, obs *zcode.Obs, model string, body []byte) {
-	resp, err := s.upstreamMessages(body)
+	resp, account, err := s.upstreamMessages(body)
 	if err != nil {
 		// 对齐 Python：失败也以 SSE error 帧 + [DONE] 收尾
 		obs.Done(200, upStatusOf(err), "error", 0, 0, 0, 0, err.Error())
@@ -502,7 +508,7 @@ func (s *Server) streamChat(w http.ResponseWriter, obs *zcode.Obs, model string,
 
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 64*1024), 8*1024*1024)
-	var in, out, tcr, tcw float64
+	var in, out, tcr, tcw int
 	finish := ""
 	for sc.Scan() {
 		line := sc.Text()
@@ -517,24 +523,30 @@ func (s *Server) streamChat(w http.ResponseWriter, obs *zcode.Obs, model string,
 			obs.FirstByte()
 		}
 		if d.UsageIn != nil {
-			in = *d.UsageIn
+			in = int(*d.UsageIn)
 		}
 		if d.UsageOut != nil {
-			out = *d.UsageOut
+			out = int(*d.UsageOut)
 		}
 		if d.CacheRead != nil {
-			tcr = *d.CacheRead
+			tcr = int(*d.CacheRead)
 		}
 		if d.CacheCreation != nil {
-			tcw = *d.CacheCreation
+			tcw = int(*d.CacheCreation)
 		}
 		if d.Finish != "" {
 			finish = d.Finish
 		}
 		switch {
 		case d.ErrText != "":
+			// 上游 error 事件：转发错误帧后终止流（与非流式聚合路径的中断
+			// 行为一致——继续消费剩余帧只会转发垃圾并掩盖真实错误）
 			fmt.Fprint(lk, "data: "+mustJSON(map[string]any{
 				"error": map[string]any{"message": truncate(d.ErrText, 400)}})+"\n\n")
+			fmt.Fprint(lk, "data: [DONE]\n\n")
+			obs.SetAccount(account)
+			obs.Done(200, resp.StatusCode, "error", int64(in), int64(out), int64(tcr), int64(tcw), d.ErrText)
+			return
 		case d.Role != "":
 			fmt.Fprint(lk, "data: "+mustJSON(chunkFrame(model, map[string]any{"role": "assistant", "content": ""}, nil))+"\n\n")
 		case d.ToolID != "":
@@ -560,6 +572,7 @@ func (s *Server) streamChat(w http.ResponseWriter, obs *zcode.Obs, model string,
 		}
 	}
 	fmt.Fprint(lk, "data: [DONE]\n\n")
+	obs.SetAccount(account)
 	obs.Done(200, resp.StatusCode, finish, int64(in), int64(out), int64(tcr), int64(tcw), "")
 }
 

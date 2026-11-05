@@ -102,6 +102,10 @@ pre.mono{white-space:pre-wrap;word-break:break-all;margin:0;font-size:12px}
 textarea.gta-body{width:100%;height:110px;background:#0e1116;border:1px solid var(--hairline);border-radius:6px;color:var(--ink);font:12px var(--mono);padding:10px;resize:vertical}
 .gta-row{display:flex;gap:6px;align-items:center;margin-top:10px;flex-wrap:wrap}
 pre.gta-res{white-space:pre-wrap;word-break:break-all;font:12px var(--mono);background:#0e1116;border:1px solid var(--hairline);border-radius:6px;padding:10px;max-height:240px;overflow:auto;margin:10px 0 0}
+details.fold{margin:10px 0 0}
+details.fold>summary{cursor:pointer;user-select:none;font-size:12px;padding:6px 10px;background:#0e1116;border:1px solid var(--hairline);border-radius:6px}
+details.fold[open]>summary{border-radius:6px 6px 0 0;border-bottom:none}
+details.fold>pre{margin:0;border-radius:0 0 6px 6px}
 .gta-meta{font-size:12px;margin-top:10px}
 .gta-hist{font-size:12px;color:var(--ink-mute);margin-top:8px}
 /* ── 网关接入卡片 ── */
@@ -241,7 +245,8 @@ function showView(btn){
   if(id==="vDiag")loadDiag();
   if(id==="vLog")loadLogs();
 }
-function saveKey(){localStorage.zc_admin_pass=document.getElementById("k").value.trim();toast("已保存");loadAll()}
+function saveKey(){const v=document.getElementById("k").value.trim();if(!v){toast("先输入管理员密码","warn");return}localStorage.zc_admin_pass=v;toast("已登录");loadAll()}
+function toggleK(){const k=document.getElementById("k");if(!k)return;const show=k.type==="password";k.type=show?"text":"password";const btn=document.getElementById("kToggle");if(btn)btn.textContent=show?"隐藏":"显示"}
 function logout(){localStorage.removeItem("zc_admin_pass");localStorage.removeItem("zc_apikey");location.reload()}
 function showLogin(err){
   $("#login").style.display="flex";
@@ -294,7 +299,7 @@ function renderMain(o,h){
   html+=`<div class="card"><h3>凭据</h3><div class="kv">
     <b>状态</b><span class="${c.valid?"ok":"bad"}">${c.valid?"有效":"无效"}${c.notice?" — "+esc(c.notice):""}</span>
     <b>模式</b><span>${esc(c.mode||"—")}${c.token_chars!=null?` <span class="dim mono">token ${c.token_chars} 字符</span>`:""}</span>
-    <b>本地鉴权</b><span>${o.local_auth?`<span class="badge on">管理员密码已开启</span> <input id="k" type="password" placeholder="管理员密码" value="${esc(localStorage.zc_admin_pass||"")}"> <button class="ghost" onclick="saveKey()">保存</button> <button class="ghost" onclick="logout()">退出登录</button>`:`<span class="badge ${o.credential&&o.credential.mode!=="none"?"warn":"off"}">${o.credential&&o.credential.admin_auth?"密码未设置（仅回环）":"未开启（仅回环）"}</span>`}</span>
+    <b>本地鉴权</b><span>${o.local_auth?`<span class="badge on">管理员密码已开启</span> <input id="k" type="password" placeholder="管理员密码" value="${esc(localStorage.zc_admin_pass||"").replace(/"/g,"&quot;")}"> <button class="ghost mini" id="kToggle" onclick="toggleK()">显示</button> <button class="ghost" onclick="saveKey()">登录</button> <button class="ghost" onclick="logout()">退出登录</button>`:`<span class="badge ${o.credential&&o.credential.mode!=="none"?"warn":"off"}">${o.credential&&o.credential.admin_auth?"密码未设置（仅回环）":"未开启（仅回环）"}</span>`}</span>
   </div></div>`;
   let poolHtml='<div class="card bad">当前不是账号池模式（单 token 或无凭据）</div>';
   if(c.mode==="pool"){
@@ -373,7 +378,7 @@ print(msg.content[0].text)
 # curl
 curl ${ep} \\
   -H "Content-Type: application/json" \\
-  -H "Authorization: Bearer ${key}" \\
+  -H "x-api-key: ${key}" \\
   -H "anthropic-version: 2023-06-01" \\
   -d '{"model": "${m}", "max_tokens": 256, "messages": [{"role": "user", "content": "你好"}]}'`;
  if(_accProto==="responses")return`# Python（openai SDK · Responses API）
@@ -400,7 +405,7 @@ print(resp.choices[0].message.content)
 
 # Node.js
 import OpenAI from "openai";
-const client = new OpenAI({base_url: "${base}", api_key: "${key}"});
+const client = new OpenAI({baseURL: "${base}", apiKey: "${key}"});
 const resp = await client.chat.completions.create({
     model: "${m}",
     messages: [{role: "user", content: "你好"}],
@@ -423,7 +428,7 @@ function paintAcc(){
 }
 function setAccProto(p){_accProto=p;paintAcc()}
 function toggleAccKey(){_accKeyOpen=!_accKeyOpen;paintAcc()}
-function copyKey(){const k=localStorage.zc_apikey||"";if(!k){toast("未登录，没有可复制的 Key","warn");return}copyText(k)}
+function copyKey(){const k=window._accApiKey||"";if(!k){toast("接入 Key 未加载，待概览刷新后再试","warn");return}copyText(k)}
 // copyText：http 面板非 secure context，navigator.clipboard 不可用 → textarea+execCommand 兜底
 function copyText(txt){
  const ok=()=>toast("已复制到剪贴板");
@@ -455,7 +460,8 @@ function gtaBodyObj(){
 function gtaCurl(){
   const obj=gtaBodyObj();if(!obj)return"（请求体不是合法 JSON）";
   obj.stream=false;
-  const h=["-H 'Content-Type: application/json'","-H 'Authorization: Bearer ${API_KEY}'"];
+  const key=window._accApiKey||"$API_KEY";
+  const h=["-H 'Content-Type: application/json'",`-H 'Authorization: Bearer ${key}'`];
   if(_gtaProto==="anthropic")h.push("-H 'anthropic-version: 2023-06-01'");
   return `curl -X POST ${location.origin}${gtaPath()} \\\n  ${h.join(" \\\n  ")} \\\n  -d '${JSON.stringify(obj)}'`;
 }
@@ -467,7 +473,7 @@ function gtaResult(res){
   _gtaHist.unshift(res);_gtaHist=_gtaHist.slice(0,10);
   let txt=res.text;
   try{txt=JSON.stringify(JSON.parse(res.text),null,2)}catch(e){/* 非 JSON 原样 */}
-  $("#gtaRes").innerHTML=`<div class="gta-meta"><span class="${res.ok?"ok":"bad"}">HTTP ${res.status||"—"}</span> · ${res.ms}ms${res.aborted?" · <span class='warn'>已中止</span>":""}</div><pre class="gta-res">${esc(txt.slice(0,4000))}</pre>`;
+  $("#gtaRes").innerHTML=`<div class="gta-meta"><span class="${res.ok?"ok":"bad"}">HTTP ${res.status||"—"}</span> · ${res.ms}ms${res.aborted?" · <span class='warn'>已中止</span>":""}</div><details class="fold"><summary>展开响应（${txt.length} 字符）</summary><pre class="gta-res">${esc(txt.slice(0,4000))}</pre></details>`;
   $("#gtaHist").innerHTML=_gtaHist.map(x=>`<div>${x.t} · ${x.proto} · HTTP <span class="${x.ok?"ok":"bad"}">${x.status||"—"}</span> · ${x.ms}ms</div>`).join("");
 }
 async function gtaSend(btn){
@@ -475,7 +481,7 @@ async function gtaSend(btn){
   if(!obj){gtaResult({ok:false,status:0,ms:0,text:"请求体不是合法 JSON",proto:_gtaProto,t:new Date().toTimeString().slice(0,8)});return}
   obj.stream=false; // 面板自测只走非流式
   const headers={"Content-Type":"application/json"};
-  const k=localStorage.zc_apikey;if(k)headers.Authorization="Bearer "+k;
+  const k=window._accApiKey||"";if(k)headers.Authorization="Bearer "+k;
   if(_gtaProto==="anthropic")headers["anthropic-version"]="2023-06-01";
   const ac=new AbortController();_gtaAbort=ac;
   btn.disabled=true;const t0=Date.now();
@@ -490,9 +496,11 @@ async function gtaSend(btn){
 }
 function gtaAbort(){_gtaAbort&&_gtaAbort.abort()}
 // 请求日志：内存环最近 N 条（新的在前），与 request.log 同源
+let _logAll=false;
 async function loadLogs(){
   let logs=[],err="";
   try{const r=await api("/admin/api/logs?n=200");logs=r.logs||[]}catch(e){err=String(e)}
+  const shown=_logAll?logs:logs.slice(0,20);
   const row=(l)=>`<tr>
     <td class="mono">${esc((l.ts||"").replace("T"," ").slice(0,19))}</td>
     <td>${esc(l.proto||"")}${l.stream?' <span class="dim">SSE</span>':""}</td>
@@ -509,10 +517,12 @@ async function loadLogs(){
   $("#vLog").innerHTML=`<div class="card"><h3>请求日志 <span class="dim">（内存环最近 200 条 · 全量落盘 request.log）</span></h3>
     ${err?`<div class="warn">${esc(err)}</div>`:""}
     <table><tr><th>时间</th><th>协议</th><th>模型</th><th>账号</th><th>状态</th><th>finish</th><th>TTFT</th><th>总耗时</th><th>in/out/cache</th><th>成本</th><th>错误</th></tr>
-    ${logs.length?logs.map(row).join(""):'<tr><td colspan="11" class="dim">暂无请求</td></tr>'}</table></div>`;
+    ${shown.length?shown.map(row).join(""):'<tr><td colspan="11" class="dim">暂无请求</td></tr>'}</table>
+    ${logs.length>20?`<div style="padding:8px 10px"><button class="ghost mini" onclick="_logAll=!_logAll;loadLogs()">${_logAll?"收起，只显示最近 20 条":"展开全部 "+logs.length+" 条"}</button></div>`:""}</div>`;
 }
 async function loadDiag(){
-  const [h,hres]=await Promise.all([api("/health"),fetch("/health",{headers:authHeaders()})]);
+  const hres=await fetch("/health",{headers:authHeaders()});
+  const h=await hres.json().catch(()=>null);
   $("#vDiag").innerHTML=`
   <div class="card"><h3>网关自测 <span class="dim">（真实走 鉴权→账号池→上游 全链路，消耗少量额度；使用窗口=北京 23:00–09:00，窗口外上游可能回 200+空 body，属额度限制非故障）</span></h3>
     <div class="gta-tabs">
@@ -531,7 +541,7 @@ async function loadDiag(){
     <div id="gtaHist" class="gta-hist"></div>
   </div>
   <div class="card"><h3>健康检查 <span class="dim">GET /health → ${hres.status}</span></h3>
-  <pre class="mono">${esc(JSON.stringify(h,null,2))}</pre></div>
+  <details class="fold"><summary>展开 /health 原始 JSON</summary><pre class="mono">${esc(JSON.stringify(h,null,2))}</pre></details></div>
   <div class="card"><h3>运维提示</h3><div class="kv">
     <b>token 来源</b><span>env <span class="mono">ZCODE_TOKEN</span> &gt; 本目录 <span class="mono">token.json</span> &gt; <span class="mono">~/.zcode/v2/config.json</span> 的 start-plan apiKey</span>
     <b>401 处理</b><span>运行 <span class="mono">./zcode2api-go.exe login</span> 重新授权；CLI/GUI 重登后网关会自动重读，无需重启</span>
@@ -651,7 +661,12 @@ async function doClaimAll(btn){
   btn.disabled=false;btn.textContent=old;
   showClaimResults(r.results||[]);
 }
-setInterval(()=>{const cb=document.getElementById("auto");if(cb&&cb.checked&&$("#login").style.display!=="flex")loadAll()},60000);
+setInterval(()=>{const cb=document.getElementById("auto");
+  if(!cb||!cb.checked||$("#login").style.display==="flex")return;
+  if($("#vMain").style.display==="none")return; // 非概览视图不重渲染（避免清掉投放展开行/表单）
+  const ae=document.activeElement;              // 正在输入时不刷新（密码框/请求体不丢内容）
+  if(ae&&(ae.tagName==="INPUT"||ae.tagName==="TEXTAREA"))return;
+  loadAll()},60000);
 loadAll();
 </script>
 </body>
