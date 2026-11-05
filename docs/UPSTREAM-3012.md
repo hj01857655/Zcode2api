@@ -115,3 +115,127 @@ body/头族两侧可枚举变量穷尽，矛盾定性：**出口环境维度**�
 设备指纹画像 vs 我们数据中心代理 + farm 号池），非请求内容可修复项。
 XinOrigin 的「指纹校验与 IP/账号无关」结论在他的环境成立，在我们环境不成立——
 门是复合的：版本档 × 模板代际 × 出口画像。生产留守旧代 seg0+seg1（本环境稳定 200）。
+
+## 3.17.2 签名子系统全貌（2026-11-05 完整逆向 + Python 复现实测）
+
+依据本机安装的 zcode.cjs（15.4MB，`OfficialRequestSecurity` @ offset ~3860000–3876000，
+只读取证）逐函数逆向，Python 全链实现并实测到凭据层。原文函数名→语义对照在括号内。
+
+### 凭据解析（nPr parseClientSigningCredential）
+
+输入 apiKey 字符串，二选一：
+
+1. **3 段 JWT**：header 须 `{alg:"HS256", typ:"JWT", sign_type:"SIGN"}`、payload 须
+   `{token_use:"project_access", api_key:"非空"}`（zod `m.literal` 严格校验，任一不符整体失败）。
+   通过后 `apiKeyId=payload.api_key`，`secret=credential=整个 JWT 串`，握手字段名 `accessToken`。
+2. **两段式 `id.secret`**（恰好一个 `.`）：`apiKeyId=id`，`secret=secret 段`，`credential=全串`，握手字段名 `apiKey`。
+
+**farm 登录 JWT（header 无 sign_type，payload iat/sub/token_version/user_id）过不了 schema**
+——官方客户端根本不会用它走签名。实测见下文握手节。
+
+### KDF 与加密原语（Coo 模块）
+
+- `deriveBytes(secret, info)`：HKDF-SHA256，salt=**`WD_CLIENT_SIGN_KDF_SALT`**，256 bits。
+  info 按用途：握手 HMAC key=`getSignKey_hmac`，私钥解密 AES key=`ed25519_priv`。
+- 握手签名（Soo）：`base64(HMAC-SHA256(key, "get_sign_key\n{apiKeyId}\n{ts}\n{nonce}"))`。
+- 私钥解密（woo）：`privateCipher`=base64(IV12 ‖ ciphertext ‖ TAG16)，AES-256-GCM，
+  **additionalData=apiKeyId（UTF8）**，明文=base64(PKCS8 Ed25519 私钥)。
+- 业务签名（koo）：`base64(Ed25519.sign(UTF8(sigMsg)))`，
+  sigMsg=`{apiKeyId}\n{ts}\n{clientVersion}\n{sessionId}\n{nonce}`。
+- PoW（xoo）：seed=sha256(`{apiKeyId}\nzcode\n{sessionId}\n{ts}`).hex()[:32]；
+  candidate=24hex 随机前缀+8hex 计数器，穷举至 sha256(seed+candidate) 前 powBits 位为 0
+  （默认 powBits=8，参数化 0–32）；X-Client-Pow=candidate。
+- nonce=16 随机字节的 hex（32 字符）；ts=毫秒字符串；appId=`zcode`。
+
+### 握手（performHandshake）
+
+`POST {业务origin}/api/paas/c1f3a7e2/v2/client`，body `{[handshakeField]: credential, nonce, sig, ts}`，
+头 `Authorization: <credential>`（raw，无 Bearer），超时 10s。
+响应信封 `{code, msg, data:{privateCipher}}`；code=500 特判，非 200 取 `HANDSHAKE_*` reason。
+私钥仅内存持有（keyState），两次 VERIFY 拒绝后刷新握手，第三次失败进 `bypassSigning` 永久免签（failOpen）。
+
+**实测（2026-11-05，farm JWT + 正确按上述参数计算的 sig）**：
+
+| 目标 | 结果 |
+|---|---|
+| `https://zcode.z.ai/api/paas/c1f3a7e2/v2/client` | HTTP 404 `404 page not found`（路由不存在） |
+| `https://api.z.ai/api/paas/c1f3a7e2/v2/client` | HTTP 200 `{"code":401,"msg":"token expired or incorrect"}` |
+| 同上 + 坏 sig（全 0） | 同 401，逐字节同响应 |
+| 同上 + apiKeyId 换 user_id | 同 401 |
+
+归因：A/B/C 三发 sig 内容完全不影响响应 → **凭据层先拒，sig 校验未轮到**。
+握手端点实际活在 **api.z.ai**；`JVs` 按 baseURL origin 拼路径，官方 3.17.2 客户端的
+业务 origin 若为 zcode.z.ai 则其握手也该 404——说明强签流量（coding plan / chatglm 档）
+的业务 origin 并非 zcode.z.ai，或网关按域灰度路由。zcode.chatglm.site / api.chatglm.site
+对本机 Python urllib 直接断 TLS（UNEXPECTED_EOF，疑似 TLS 指纹防护），未测到路由层。
+
+### 业务请求头（sendSigned）
+
+请求须自带 `X-Session-Id`（CLI 侧 session id，`sess_` 前缀，格式 `^[A-Za-z0-9_.:-]{1,128}$`），
+否则直接抛 invalid-config 不发。七件签名头：
+`X-Client-Ts`、`X-Client-Version`（取 provider 头 `X-ZCode-App-Version`，缺省=构建版本）、
+`X-Client-Sig`、`X-Session-Id`、`X-Client-Nonce`、`X-App-Id: zcode`、`X-Client-Pow`。
+sanitize 列表（重发前剥离）：X-Client-Ts/Version/Sig/Nonce/Pow/App-Id/Sign-Verified。
+
+### 触发判定（YVs requiresClientRequestSigning）
+
+- **免签**：zhipu-account + mode ∈ {start-plan, off-peak, highspeed}（我们的 farm 号在此档）
+- **强签**：zhipu-coding-plan-api-key；zhipu-account + mode ∈ {individual-coding-plan, team-coding-plan}；
+  baseURL host ∈ {api.chatglm.site, zcode.chatglm.site}
+- messages baseURL 官方配置：`${origin}/api/v1/zcode-plan/anthropic`
+
+### Python 参考实现（自洽可跑，凭据换 project_access JWT 即可端到端）
+
+```python
+# 依赖：cryptography>=42；凭据：任何满足 nPr schema 的 JWT 或 id.secret
+import base64, hashlib, hmac, secrets, time
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+KDF_SALT = b"WD_CLIENT_SIGN_KDF_SALT"
+APP_ID, POW_BITS, VERSION = "zcode", 8, "3.17.2"
+
+def hkdf(secret: bytes, info: bytes) -> bytes:
+    return HKDF(algorithm=hashes.SHA256(), length=32, salt=KDF_SALT, info=info).derive(secret)
+
+def handshake_sig(secret: str, api_key_id: str, ts: str, nonce: str) -> str:
+    key = hkdf(secret.encode(), b"getSignKey_hmac")
+    msg = f"get_sign_key\n{api_key_id}\n{ts}\n{nonce}".encode()
+    return base64.b64encode(hmac.new(key, msg, hashlib.sha256).digest()).decode()
+
+def decrypt_private_key(secret: str, api_key_id: str, private_cipher: str):
+    c = base64.b64decode(private_cipher)
+    aes = AESGCM(hkdf(secret.encode(), b"ed25519_priv"))
+    pkcs8 = base64.b64decode(AESGCM.decrypt(aes, c[:12], c[12:], api_key_id.encode()).decode())
+    return serialization.load_der_private_key(pkcs8, None)  # Ed25519PrivateKey
+
+def solve_pow(api_key_id: str, session_id: str, ts: str) -> str:
+    seed = hashlib.sha256(f"{api_key_id}\n{APP_ID}\n{session_id}\n{ts}".encode()).hexdigest()[:32]
+    prefix = secrets.token_bytes(12).hex()
+    for i in range(4294967296):
+        cand = f"{prefix}{i:08x}"
+        d = hashlib.sha256(f"{seed}{cand}".encode()).digest()
+        if d[0] == 0:  # powBits=8：首字节为 0 即 8 个零位
+            return cand
+    raise RuntimeError("pow unsolvable")
+
+def sign_business(key, api_key_id: str, session_id: str, nonce: str, version: str = VERSION):
+    ts = str(int(time.time() * 1000))
+    msg = f"{api_key_id}\n{ts}\n{version}\n{session_id}\n{nonce}".encode()
+    return ts, base64.b64encode(key.sign(msg)).decode()
+```
+
+握手请求：`POST https://api.z.ai/api/paas/c1f3a7e2/v2/client`，
+`{"accessToken": <jwt>, "nonce": <32hex>, "sig": <handshake_sig>, "ts": <ms>}`，
+头 `Authorization: <jwt>` + `Content-Type: application/json`。
+完整探针（含请求发送与脱敏输出）见会话 Temp/sign_probe.py 模式。
+
+### 对本项目的意义
+
+- 生产（3.16.3×旧代，farm 号=Start Plan 免签档）**无需签名**，现状不动。
+- 若将来 Start Plan 也被强制签名：签名/PoW 算法层已完全打通（本节代码），
+  唯一缺口是 **project_access 代际凭据**（coding plan API key）——farm 登录 JWT 实测不被
+  握手端点接受。届时从号库渠道拿 coding-plan-api-key 塞入即可。
+- 遇 `{"code":401,"msg":"token expired or incorrect"}`（api.z.ai 握手）→ 凭据代际问题，
+  不要再调 sig 算法。

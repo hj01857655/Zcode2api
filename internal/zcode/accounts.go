@@ -237,14 +237,48 @@ func jwtPayload(jwt string) ([]byte, bool) {
 	return raw, err == nil
 }
 
-// BalanceEntry billing/balance 里一个额度桶的摘要。
+// BalanceEntry billing/balance 里一个额度桶的摘要。上游桶的完整形态
+// （实测 2026-11-04 原始响应）还包括 bucket_id/entitlement_id/capabilities/
+// period_start/period_end——面板要靠 capabilities 区分模型桶、靠 period 说明
+// 每日重置，不能只留数字三件套。
 type BalanceEntry struct {
-	Plan      string `json:"plan"`
-	Model     string `json:"model"`
-	Remaining int64  `json:"remaining"`
-	Total     int64  `json:"total"`
-	Used      int64  `json:"used"`
-	ExpiresAt string `json:"expires_at"` // CST8
+	Plan          string   `json:"plan"`
+	Model         string   `json:"model"`      // show_name
+	BucketID      string   `json:"bucket_id,omitempty"`
+	EntitlementID string   `json:"entitlement_id,omitempty"`
+	Meter         string   `json:"meter,omitempty"`
+	UnitType      string   `json:"unit_type,omitempty"`
+	Capabilities  []string `json:"capabilities,omitempty"` // 如 model:glm-5.3
+	Priority      int      `json:"priority,omitempty"`
+	PeriodStart   string   `json:"period_start,omitempty"` // CST8 MM-DD HH:MM
+	PeriodEnd     string   `json:"period_end,omitempty"`
+	Remaining     int64    `json:"remaining"`
+	Total         int64    `json:"total"`
+	Used          int64    `json:"used"`
+	ExpiresAt     string   `json:"expires_at"` // CST8
+}
+
+// BalanceEntitlement plans[].entitlements 一条配额定义。
+type BalanceEntitlement struct {
+	EntitlementID string `json:"entitlement_id"`
+	ShowName      string `json:"show_name"`
+	GrantUnits    int64  `json:"grant_units"`
+	Period        string `json:"period"` // daily 等：桶的重置口径
+	Meter         string `json:"meter,omitempty"`
+}
+
+// BalancePlan data.plans[] 一个已激活计划（名称/状态/有效期）。此前这整块
+// 都没解析，面板看不到账号当前挂在哪个计划上。
+type BalancePlan struct {
+	UserPlanID   string               `json:"user_plan_id,omitempty"`
+	PlanID       string               `json:"plan_id"`
+	Name         string               `json:"name"`
+	Description  string               `json:"description,omitempty"`
+	Status       string               `json:"status"`
+	Priority     int                  `json:"priority,omitempty"`
+	StartsAt     string               `json:"starts_at,omitempty"`
+	EndsAt       string               `json:"ends_at,omitempty"`
+	Entitlements []BalanceEntitlement `json:"entitlements,omitempty"`
 }
 
 // AccountBalance 单账号余额查询结果。
@@ -253,6 +287,7 @@ type AccountBalance struct {
 	File    string         `json:"file"`
 	UID     string         `json:"uid,omitempty"`
 	Err     string         `json:"err,omitempty"`
+	Plans   []BalancePlan  `json:"plans,omitempty"`
 	Entries []BalanceEntry `json:"entries,omitempty"`
 }
 
@@ -285,16 +320,44 @@ func FetchBalance(client *http.Client, acc SwitchAccount) (AccountBalance, error
 		return out, err
 	}
 	var payload struct {
-		Code int `json:"code"`
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
 		Data struct {
+			Plans []struct {
+				UserPlanID   string `json:"user_plan_id"`
+				PlanID       string `json:"plan_id"`
+				Name         string `json:"name"`
+				Description  string `json:"description"`
+				Priority     int    `json:"priority"`
+				Status       string `json:"status"`
+				StartsAt     int64  `json:"starts_at"`
+				EndsAt       int64  `json:"ends_at"`
+				Entitlements []struct {
+					EntitlementID string `json:"entitlement_id"`
+					ShowName      string `json:"show_name"`
+					Meter         string `json:"meter"`
+					UnitType      string `json:"unit_type"`
+					GrantUnits    int64  `json:"grant_units"`
+					Period        string `json:"period"`
+					Priority      int    `json:"priority"`
+				} `json:"entitlements"`
+			} `json:"plans"`
 			Balances []struct {
-				PlanID     string `json:"plan_id"`
-				ShowName   string `json:"show_name"`
-				TotalUnits int64  `json:"total_units"`
-				UsedUnits  int64  `json:"used_units"`
-				Remaining  int64  `json:"remaining_units"`
-				Available  int64  `json:"available_units"`
-				ExpiresAt  int64  `json:"expires_at"`
+				BucketID      string   `json:"bucket_id"`
+				PlanID        string   `json:"plan_id"`
+				EntitlementID string   `json:"entitlement_id"`
+				ShowName      string   `json:"show_name"`
+				Meter         string   `json:"meter"`
+				UnitType      string   `json:"unit_type"`
+				Capabilities  []string `json:"capabilities"`
+				Priority      int      `json:"priority"`
+				TotalUnits    int64    `json:"total_units"`
+				UsedUnits     int64    `json:"used_units"`
+				Remaining     int64    `json:"remaining_units"`
+				Available     int64    `json:"available_units"`
+				PeriodStart   int64    `json:"period_start"`
+				PeriodEnd     int64    `json:"period_end"`
+				ExpiresAt     int64    `json:"expires_at"`
 			} `json:"balances"`
 		} `json:"data"`
 	}
@@ -302,8 +365,18 @@ func FetchBalance(client *http.Client, acc SwitchAccount) (AccountBalance, error
 		return out, fmt.Errorf("HTTP %d 非 JSON 响应: %.80s", resp.StatusCode, string(data))
 	}
 	if payload.Code != 0 {
-		out.Err = fmt.Sprintf("code=%d", payload.Code)
+		msg := payload.Msg
+		if msg == "" {
+			msg = claimErrText[payload.Code]
+		}
+		out.Err = fmt.Sprintf("balance code=%d: %s", payload.Code, msg)
 		return out, nil
+	}
+	cst := func(ts int64) string {
+		if ts <= 0 {
+			return ""
+		}
+		return time.Unix(ts, 0).In(CST8).Format("01-02 15:04")
 	}
 	out.Entries = []BalanceEntry{}
 	for _, b := range payload.Data.Balances {
@@ -311,18 +384,44 @@ func FetchBalance(client *http.Client, acc SwitchAccount) (AccountBalance, error
 		if remain == 0 {
 			remain = b.Available
 		}
-		exp := ""
-		if b.ExpiresAt > 0 {
-			exp = time.Unix(b.ExpiresAt, 0).In(CST8).Format("01-02 15:04")
-		}
 		out.Entries = append(out.Entries, BalanceEntry{
-			Plan:      b.PlanID,
-			Model:     b.ShowName,
-			Remaining: remain,
-			Total:     b.TotalUnits,
-			Used:      b.UsedUnits,
-			ExpiresAt: exp,
+			Plan:          b.PlanID,
+			Model:         b.ShowName,
+			BucketID:      b.BucketID,
+			EntitlementID: b.EntitlementID,
+			Meter:         b.Meter,
+			UnitType:      b.UnitType,
+			Capabilities:  b.Capabilities,
+			Priority:      b.Priority,
+			PeriodStart:   cst(b.PeriodStart),
+			PeriodEnd:     cst(b.PeriodEnd),
+			Remaining:     remain,
+			Total:         b.TotalUnits,
+			Used:          b.UsedUnits,
+			ExpiresAt:     cst(b.ExpiresAt),
 		})
+	}
+	for _, p := range payload.Data.Plans {
+		bp := BalancePlan{
+			UserPlanID:  p.UserPlanID,
+			PlanID:      p.PlanID,
+			Name:        p.Name,
+			Description: p.Description,
+			Status:      p.Status,
+			Priority:    p.Priority,
+			StartsAt:    cst(p.StartsAt),
+			EndsAt:      cst(p.EndsAt),
+		}
+		for _, e := range p.Entitlements {
+			bp.Entitlements = append(bp.Entitlements, BalanceEntitlement{
+				EntitlementID: e.EntitlementID,
+				ShowName:      e.ShowName,
+				GrantUnits:    e.GrantUnits,
+				Period:        e.Period,
+				Meter:         e.Meter,
+			})
+		}
+		out.Plans = append(out.Plans, bp)
 	}
 	return out, nil
 }

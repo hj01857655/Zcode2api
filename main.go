@@ -98,7 +98,7 @@ func serve() {
 	if os.Getenv("ZCODE_AUTO_CLAIM") != "0" {
 		go func() {
 			run := func(when string) {
-				for _, res := range handler.ClaimAll(cfg, client, false) {
+				for _, res := range handler.ClaimAll(cfg, client, false, "") {
 					log.Printf("自动领套餐[%s] %s: %s", when, res.Account, res.Message)
 				}
 			}

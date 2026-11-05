@@ -17,7 +17,7 @@ func getOverview(cfg *config.Config, client *zcode.Client, headers map[string]st
 		req.Header.Set(k, v)
 	}
 	rec := httptest.NewRecorder()
-	Overview(cfg, client)(rec, req)
+	Overview(cfg, client, func() map[string]int64 { return map[string]int64{} })(rec, req)
 	return rec
 }
 

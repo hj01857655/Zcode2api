@@ -330,6 +330,13 @@ func (p *Pool) Snapshot() []map[string]any {
 			"label": a.Label, "provider": a.Provider,
 			"token_chars": len(a.Token), "saved_at": a.SavedAt,
 		}
+		// JWT 过期时间（CST8）随快照下发，面板据此做红黄分级预警
+		if exp, ok := jwtExp(a.Token); ok {
+			left := int(exp.Sub(now).Seconds())
+			item["exp_at"] = exp.In(CST8).Format("01-02 15:04")
+			item["expired"] = left < 0
+			item["exp_left_s"] = left
+		}
 		if until, bad := p.cool[a.Label]; bad && now.Before(until) {
 			item["cooldown_s"] = int(time.Until(until).Seconds())
 		}

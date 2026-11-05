@@ -10,6 +10,7 @@ package zcode
 //
 // 可用环境变量覆盖：ZCODE_NODE（node 路径）、ZCODE_CAPTCHA_SCRIPT、ZCODE_CAPTCHA_SDK。
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -53,7 +54,12 @@ func solveOnce(scene, prefix, region string) (string, error) {
 	if node == "" {
 		node = "node"
 	}
-	cmd := exec.Command(node, script)
+	// 110s 硬超时：脚本内部 timer 为 100s，且 fail 回调在 70–90s 也可能带回
+	// 可用 param（实测 60s 会杀掉慢但可用的求解：三号两杀一成就误判失败）。
+	// 110s = 100s 自限 + 10s 余量；真正的死挂（网络无响应）仍会在这里断掉。
+	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, node, script)
 	cmd.Dir = filepath.Dir(script)
 	env := os.Environ()
 	if scene != "" {
@@ -73,6 +79,9 @@ func solveOnce(scene, prefix, region string) (string, error) {
 	cmd.Env = env
 	out, err := cmd.Output()
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("node 求解超时（110s）：验证码服务端点无响应")
+		}
 		return "", fmt.Errorf("node 求解失败: %w", err)
 	}
 	var res struct {

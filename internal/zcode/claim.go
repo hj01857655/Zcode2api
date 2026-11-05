@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -308,42 +309,98 @@ type ClaimResult struct {
 	Message string `json:"message"`
 }
 
-// ClaimBestForToken 对单个 JWT：补报激活 → preview → 领 priority 最高的套餐。
-// 幂等：1003（已领过）按成功处理；没有可领套餐返回 ok=false + 说明。
+// ---- 当日领取台账 ----
+// 已领过的 (账号, plan_id) 当天不再发起 claim——省掉 activation 上报与验证码
+// 求解（单号最长 2 分钟）这类高成本重复动作。台账按 CST 日自动过期；
+// 新的 plan_id 不受影响，投放换新照样能领。
+
+var claimLedgerDir = func() string { return filepath.Dir(LocalTokenPath()) }
+
+// ledgerMu 串行化读-改-写（面板与定时任务可能并发领取）。
+var ledgerMu sync.Mutex
+
+// jwtLedgerKey 台账/设备共用的账号 key：sha256(jwt)[:16]（与 StableDeviceMid 同构）。
+func jwtLedgerKey(jwt string) string {
+	sum := sha256.Sum256([]byte(jwt))
+	return hex.EncodeToString(sum[:])[:16]
+}
+
+type claimLedger struct {
+	Date   string              `json:"date"`
+	Claims map[string][]string `json:"claims"`
+}
+
+func (l *claimLedger) path() string { return filepath.Join(claimLedgerDir(), "zcode_claimed.json") }
+
+func loadLedger() claimLedger {
+	l := claimLedger{Claims: map[string][]string{}}
+	raw, err := os.ReadFile(l.path())
+	if err == nil {
+		_ = json.Unmarshal(raw, &l)
+	}
+	if l.Claims == nil {
+		l.Claims = map[string][]string{}
+	}
+	if today := time.Now().In(CST8).Format("2006-01-02"); l.Date != today {
+		l.Date, l.Claims = today, map[string][]string{} // 跨日即整体过期
+	}
+	return l
+}
+
+// isClaimedToday 该账号今天是否已成功领过这个 plan_id。
+func isClaimedToday(jwt, planID string) bool {
+	ledgerMu.Lock()
+	defer ledgerMu.Unlock()
+	l := loadLedger()
+	for _, p := range l.Claims[jwtLedgerKey(jwt)] {
+		if p == planID {
+			return true
+		}
+	}
+	return false
+}
+
+// markClaimed 记一笔当日已领（claim code=0 或服务端 1003 时调用）。
+func markClaimed(jwt, planID string) {
+	ledgerMu.Lock()
+	defer ledgerMu.Unlock()
+	l := loadLedger()
+	k := jwtLedgerKey(jwt)
+	for _, p := range l.Claims[k] {
+		if p == planID {
+			return
+		}
+	}
+	l.Claims[k] = append(l.Claims[k], planID)
+	if raw, err := json.MarshalIndent(l, "", "  "); err == nil {
+		_ = os.WriteFile(l.path(), raw, 0o600)
+	}
+}
+
+// ClaimBestForToken 对单个 JWT：补报激活 → touch 投放清单 → 领其中的套餐。
+// 幂等：1003（已领过）按成功处理；无投放返回 ok=false + 说明。
+// 不走 preview：桌面端领取链路的前置数据源唯一是 touch.query（CLAIM-FLOW.md §1.5）。
 func ClaimBestForToken(client *http.Client, jwt, deviceMid string) (string, []Plan) {
 	_ = ReportActivation(client, jwt, deviceMid) // 失败只影响资格，不阻断
-	// 主路径：touch 投放清单（桌面端领取链路的前置数据源唯一是 touch.query，
-	// preview 注册但零调用——CLAIM-FLOW.md §1.5 实锤）。touch 失败回落 preview。
 	dels, terr := TouchPlans(client, jwt, deviceMid)
+	if terr != nil {
+		return "touch 失败: " + terr.Error(), nil
+	}
 	var planID, campaignID string
-	if terr == nil {
-		for _, d := range dels {
-			if len(d.PlanIDs) > 0 {
-				planID = d.PlanIDs[0]
-				campaignID = d.CampaignID
-				break
-			}
+	for _, d := range dels {
+		if len(d.PlanIDs) > 0 {
+			planID = d.PlanIDs[0]
+			campaignID = d.CampaignID
+			break
 		}
+	}
+	if planID == "" {
+		return "现在没有可领取的套餐（touch 无投放）", nil
+	}
+	if isClaimedToday(jwt, planID) {
+		return "今天已领取过 " + planID + "（台账跳过，未发起 claim）", nil
 	}
 	var plans []Plan
-	if planID == "" {
-		// 回落：preview 兼容路径（touch 无投放或失败时仍可尝试）
-		var err error
-		plans, err = PreviewPlans(client, jwt, deviceMid)
-		if err != nil {
-			return "preview 失败: " + err.Error(), nil
-		}
-		if len(plans) == 0 {
-			return "现在没有可领取的套餐", plans
-		}
-		best := plans[0]
-		for _, p := range plans[1:] {
-			if p.Priority > best.Priority {
-				best = p
-			}
-		}
-		planID = best.PlanID
-	}
 	body := map[string]string{"plan_id": planID}
 	// 验证码配置动态下发；开启时先求解再发起 claim（param 一次性），避免
 	// 先裸发一轮吃 3007。求解失败不阻断——退回 3007 现场重试的兜底路径。
@@ -398,12 +455,10 @@ func ClaimBestForToken(client *http.Client, jwt, deviceMid string) (string, []Pl
 		}
 		break
 	}
-	var planName string
-	if planID != "" && len(plans) > 0 {
-		planName = plans[0].Name // preview 回落路径：best 对应的套餐名
-	}
+	planName := planID // touch 投放不携带套餐名，用 plan_id 标识
 	switch {
 	case code == 0:
+		markClaimed(jwt, planID)
 		// 桌面对齐：领取成功后上报投放动作 confirm（遥测形状，失败不影响领取结果）
 		_ = TouchReport(client, jwt, deviceMid, campaignID, "confirm")
 		return "领取成功: " + planName, plans
@@ -427,6 +482,7 @@ func ClaimBestForToken(client *http.Client, jwt, deviceMid string) (string, []Pl
 		}
 		return fmt.Sprintf("领取未成功: %s（code=%d）", msg, code), plans
 	case code == 1003:
+		markClaimed(jwt, planID) // 服务端已领=事实，落账避免当日再撞
 		return "已领取过这一期: " + planName, plans
 	default:
 		if text, ok := claimErrText[code]; ok {
@@ -477,19 +533,32 @@ func TouchPlans(client *http.Client, jwt, deviceMid string) ([]TouchDelivery, er
 	if err != nil {
 		return nil, err
 	}
+	// 判定一律以响应体为准：业务语义全在 code/msg（上游 HTTP 200 也可能回
+	// code=429 这类业务码，claim 端点同构）；HTTP 状态码只在 body 不是 JSON
+	// 时作为兜底线索。实测 2026-11-04：限流形态是 HTTP 429 + 空 body。
 	var payload struct {
-		Code int `json:"code"`
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
 		Data struct {
 			ServerTime int64            `json:"server_time"`
 			Language   string           `json:"language"`
 			Deliveries []map[string]any `json:"deliveries"`
 		} `json:"data"`
+		LogID string `json:"logid"`
 	}
 	if json.Unmarshal(data, &payload) != nil {
-		return nil, fmt.Errorf("touch 响应解析失败: %.80s", string(data))
+		hint := ""
+		if resp.StatusCode == http.StatusTooManyRequests {
+			hint = "（HTTP 429 限流：查询太频繁，等几分钟再点）"
+		}
+		return nil, fmt.Errorf("touch 无 JSON 响应: HTTP %d%s，body=%.80s", resp.StatusCode, hint, string(data))
 	}
 	if payload.Code != 0 {
-		return nil, fmt.Errorf("touch code=%d", payload.Code)
+		msg := payload.Msg
+		if msg == "" {
+			msg = claimErrText[payload.Code]
+		}
+		return nil, fmt.Errorf("touch code=%d: %s（logid=%s）", payload.Code, msg, payload.LogID)
 	}
 	out := []TouchDelivery{}
 	seenPos := map[string]bool{}
