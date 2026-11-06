@@ -5,6 +5,29 @@
 > ZCode2api-go（服务器多账号池网关）。不是重新造轮子——是把已有的池/台账/
 > 熔断升级成事件驱动的 Super-agent 骨架。
 
+## -1. 官方原型已开源：deepseek-ai/dsh-superagent-prototype
+
+公众号文章发布同日，官方把内部原型开源了（TypeScript + DeepSeek Harness
+插件形态，README 明示 research prototype 非产品）。与文章五模块的对应与差异：
+
+| 文章概念 | 原型实现 | 借鉴价值 |
+|---|---|---|
+| Router 层 | 主 Session（`dsh-superagent-router` preset，小工具集）+ **Assessor**（Eval 评估器，独立裁判） | 我们方案没有 Assessor——「要不要行动」直接 Router 一锤，官方拆成独立 Evals 部件（batching/deadline/replay），更干净 |
+| Worker 层 | Executor Session（`worker-<ticket>`，每 Ticket 独立目录 + git worktree prepare） | 与我们 Worker 层同构；目录/worktree 隔离做法直接抄 |
+| 事件驱动 | Source 插件（GitHub/Feishu）→ Trigger → Engine.Intake → fan-out | 接入形态比文章更具体：Trigger 入库、 disposition 记录、订阅 fan-out |
+| 两级过滤 | admission.md prompt（Slow Path）+ 程序层白名单 | 同构 |
+| 投机执行 | 文章 §3.4 **原型未实现**（README 明说部分设计是 future work） | 无需对齐 |
+| Outbox/Passes | 单事务写 receipts + 每 2s pass 泵（Effect 在事务内入队、commit 后执行） | 经典 outbox 模式，可白嫖 |
+
+**哲学篇（000）的核心原则值得全文照抄进我们的 Router prompt**：
+「占用尽可能少的人类注意力，给出尽可能多的价值」——只在被要求或书面规则
+允许时行动；只在人必须行动或能用结果时说话；一次只问一个具体问题；
+按影响而非努力停止；诚实汇报。责任条款：从窄白名单起步、主动工作先只记录。
+
+**实现启示修正**：官方原型跑在 DSH 插件进程里（pnpm + profile.yml patch），
+不是独立 daemon——我们的形态（2api 独立进程 + hub 桌面端）反而更接近
+文章的「计算/状态/环境分离」，移植成本比预想低。
+
 ## 0. 现状盘点：我们离 Super-agent 有多远
 
 | DeepSeek 特征 | 我们已有的 | 缺口 |
