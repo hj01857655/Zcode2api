@@ -35,16 +35,26 @@ tr.subrow th,tr.subrow td{border-bottom:1px solid var(--hairline-soft)}
 pre.mono{white-space:pre-wrap;word-break:break-all;margin:0;font-size:12px}
 .badge{display:inline-block;border-radius:99px;padding:1px 9px;font-size:11px;font-weight:600}
 .badge.on{background:rgba(98,195,112,.12);color:var(--mint)}.badge.off{background:rgba(224,82,82,.12);color:var(--red)}
-/* ── 侧栏导航（zcode-hub 形态） ── */
-.sidenav{width:208px;flex:none;display:flex;flex-direction:column;gap:4px;padding:16px 10px 12px;border-right:1px solid var(--hairline-soft);background:var(--bg-2)}
+/* ── 侧栏导航（zcode-hub 形态，支持折叠成图标窄条） ── */
+.sidenav{width:208px;flex:none;display:flex;flex-direction:column;gap:4px;padding:16px 10px 12px;border-right:1px solid var(--hairline-soft);background:var(--bg-2);transition:width .18s ease}
+.sidenav.collapsed{width:54px;padding:16px 6px 12px}
 .side-logo{font-family:var(--mono);font-size:16.5px;letter-spacing:.18em;font-weight:600;color:var(--ink);white-space:nowrap;padding:0 10px 14px;display:flex;align-items:baseline;min-width:0}
 .side-logo .ver{font-size:12px;color:var(--ink-mute);letter-spacing:.08em;margin-left:6px;overflow:hidden;text-overflow:ellipsis;flex:1}
+.sidenav.collapsed .side-logo{justify-content:center;padding:0 0 14px;letter-spacing:0}
+.sidenav.collapsed .side-logo .lg-t,.sidenav.collapsed .side-logo .ver{display:none}
+.sidenav.collapsed .side-logo::before{content:"Z";font-size:17px;color:var(--amber)}
+.sidenav.collapsed #navFold .ic{transform:rotate(180deg)}
 .side-item{position:relative;display:flex;align-items:center;gap:9px;text-align:left;padding:9px 12px;border-radius:8px;color:var(--ink-dim);white-space:nowrap;cursor:pointer;background:none;border:none;font:14px var(--body)}
 .side-item:hover{background:var(--panel);color:var(--ink)}
 .side-item.on{background:var(--panel-2);color:var(--amber)}
 .side-item.on::before{content:"";position:absolute;left:0;top:22%;bottom:22%;width:3px;border-radius:2px;background:var(--amber)}
+.side-item .lb{overflow:hidden;text-overflow:ellipsis}
+.sidenav.collapsed .side-item{justify-content:center;padding:9px 0}
+.sidenav.collapsed .side-item .lb{display:none}
 .side-spacer{flex:1}
 .side-foot{display:flex;align-items:center;gap:8px;padding:12px 10px 2px;border-top:1px solid var(--hairline-soft);font-size:13px;color:var(--ink-dim)}
+.sidenav.collapsed .side-foot{justify-content:center;padding:12px 0 2px}
+.sidenav.collapsed .side-foot .status-text{display:none}
 .side-foot .status-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .status-dot{width:8px;height:8px;border-radius:50%;background:var(--mint);box-shadow:0 0 7px rgba(98,195,112,.5);flex:none}
 .status-dot.run{background:var(--red);box-shadow:0 0 7px rgba(224,82,82,.55);animation:pulse 1.6s ease-in-out infinite}
@@ -125,12 +135,13 @@ pre.acc-pre{white-space:pre-wrap;word-break:break-all;font:12px var(--mono);back
 </style>
 </head>
 <body>
-<nav class="sidenav">
-  <div class="side-logo">ZCODE·GW<span class="ver" id="sideVer"></span></div>
-  <button class="side-item on" data-v="vMain" onclick="showView(this)">◧ 概览</button>
-  <button class="side-item" data-v="vPool" onclick="showView(this)">☰ 账号池</button>
-  <button class="side-item" data-v="vDiag" onclick="showView(this)">⚙ 诊断</button>
-  <button class="side-item" data-v="vLog" onclick="showView(this)">≡ 请求日志</button>
+<nav class="sidenav" id="sidenav">
+  <div class="side-logo"><span class="lg-t">ZCODE·GW</span><span class="ver" id="sideVer"></span></div>
+  <button class="side-item" id="navFold" onclick="toggleNav()" title="折叠/展开侧栏"><span class="ic">«</span><span class="lb">收起侧栏</span></button>
+  <button class="side-item on" data-v="vMain" onclick="showView(this)"><span class="ic">◧</span><span class="lb">概览</span></button>
+  <button class="side-item" data-v="vPool" onclick="showView(this)"><span class="ic">☰</span><span class="lb">账号池</span></button>
+  <button class="side-item" data-v="vDiag" onclick="showView(this)"><span class="ic">⚙</span><span class="lb">诊断</span></button>
+  <button class="side-item" data-v="vLog" onclick="showView(this)"><span class="ic">≡</span><span class="lb">请求日志</span></button>
   <div class="side-spacer"></div>
   <div class="side-foot"><span class="status-dot off" id="dot"></span><span class="status-text" id="dotTxt">未加载</span></div>
 </nav>
@@ -245,6 +256,13 @@ function showView(btn){
   if(id==="vDiag")loadDiag();
   if(id==="vLog")loadLogs();
 }
+// 侧栏折叠：状态存 localStorage，刷新保持；折叠后只留图标窄条
+function toggleNav(){
+  const nav=$("#sidenav");
+  const collapsed=nav.classList.toggle("collapsed");
+  localStorage.zc_nav_collapsed=collapsed?"1":"";
+}
+if(localStorage.zc_nav_collapsed)$("#sidenav").classList.add("collapsed");
 function saveKey(){const v=document.getElementById("k").value.trim();if(!v){toast("先输入管理员密码","warn");return}localStorage.zc_admin_pass=v;toast("已登录");loadAll()}
 function toggleK(){const k=document.getElementById("k");if(!k)return;const show=k.type==="password";k.type=show?"text":"password";const btn=document.getElementById("kToggle");if(btn)btn.textContent=show?"隐藏":"显示"}
 function logout(){localStorage.removeItem("zc_admin_pass");localStorage.removeItem("zc_apikey");location.reload()}
@@ -495,14 +513,44 @@ async function gtaSend(btn){
   }finally{btn.disabled=false;_gtaAbort=null}
 }
 function gtaAbort(){_gtaAbort&&_gtaAbort.abort()}
-// 请求日志：内存环最近 N 条（新的在前），与 request.log 同源
-let _logAll=false;
+// 请求日志：内存环最近 N 条（新的在前），与 request.log 同源；行可点开看全字段
+let _logAll=false,_logOpen=new Set();
+function logSubRow(i){
+  const l=(window._logs||[])[i];if(!l)return null;
+  const kv=(k,v,cls)=>v==null||v===""?"":`<b>${k}</b><span class="${cls||""}">${esc(v)}</span>`;
+  const tr=document.createElement("tr");tr.id="lsub_"+i;tr.className="subrow";
+  tr.innerHTML=`<td colspan="11"><div class="kv">
+    ${kv("req_id",l.req_id,"mono")}
+    ${kv("协议",(l.proto||"—")+(l.stream?"（SSE 流式）":"（非流式）"))}
+    ${kv("model",l.model,"mono")}
+    ${kv("account",l.account,"mono")}
+    ${kv("状态",`${l.status||"—"}${l.up_status?`（upstream ${l.up_status}）`:""}`,l.status===200?"ok":"bad")}
+    ${kv("finish",l.finish||"—","mono")}
+    ${kv("TTFT / 总耗时",`${l.ttft_ms?l.ttft_ms+"ms":"—"} / ${l.total_ms??"—"}ms`,"mono")}
+    ${kv("token in/out",`${l.tin||0} / ${l.tout||0}`,"mono")}
+    ${kv("cache read/creation",`${l.tcr||0} / ${l.tcw||0}`,"mono")}
+    ${kv("成本",l.cost!=null?("$"+Number(l.cost).toFixed(6)):"（未知模型无牌价）","mono")}
+    ${kv("UA",l.ua||"—","mono")}
+  </div>
+  ${l.err?`<div style="margin-top:6px"><b class="dim" style="font-weight:400;font-size:12px">错误详情</b><pre class="mono bad" style="margin-top:3px">${esc(l.err)}</pre></div>`:""}
+  </td>`;
+  return tr;
+}
+function toggleLogRow(i){
+  const ex=document.getElementById("lsub_"+i);
+  if(ex){ex.remove();_logOpen.delete(i);return}
+  const tr=logSubRow(i);if(!tr)return;
+  _logOpen.add(i);
+  document.getElementById("lrow_"+i).after(tr);
+}
 async function loadLogs(){
   let logs=[],err="";
   try{const r=await api("/admin/api/logs?n=200");logs=r.logs||[]}catch(e){err=String(e)}
+  window._logs=logs;
+  _logOpen=new Set([..._logOpen].filter(i=>i<logs.length));
   const shown=_logAll?logs:logs.slice(0,20);
-  const row=(l)=>`<tr>
-    <td class="mono">${esc((l.ts||"").replace("T"," ").slice(0,19))}</td>
+  const row=(l,i)=>`<tr id="lrow_${i}" onclick="toggleLogRow(${i})" style="cursor:pointer" title="点击展开/收起详情">
+    <td class="mono"><span class="dim">${_logOpen.has(i)?"▾":"▸"}</span> ${esc((l.ts||"").replace("T"," ").slice(0,19))}</td>
     <td>${esc(l.proto||"")}${l.stream?' <span class="dim">SSE</span>':""}</td>
     <td class="mono">${esc(l.model||"")}</td>
     <td>${esc(l.account||"—")}</td>
@@ -512,13 +560,14 @@ async function loadLogs(){
     <td class="mono">${l.total_ms??"—"}</td>
     <td class="mono">${l.tin||0}/${l.tout||0}${l.tcr?`/${l.tcr}`:""}</td>
     <td class="mono">${l.cost?("$"+l.cost.toFixed(6)):"—"}</td>
-    <td class="mono" title="${esc(l.err||"")}">${esc((l.err||"").slice(0,40))}</td>
+    <td class="mono${l.err?" bad":""}" title="${esc(l.err||"")}">${esc((l.err||"").slice(0,40))}</td>
   </tr>`;
-  $("#vLog").innerHTML=`<div class="card"><h3>请求日志 <span class="dim">（内存环最近 200 条 · 全量落盘 request.log）</span></h3>
+  $("#vLog").innerHTML=`<div class="card"><h3>请求日志 <span class="dim">（内存环最近 200 条 · 点击行展开完整字段 · 全量落盘 request.log）</span></h3>
     ${err?`<div class="warn">${esc(err)}</div>`:""}
     <table><tr><th>时间</th><th>协议</th><th>模型</th><th>账号</th><th>状态</th><th>finish</th><th>TTFT</th><th>总耗时</th><th>in/out/cache</th><th>成本</th><th>错误</th></tr>
     ${shown.length?shown.map(row).join(""):'<tr><td colspan="11" class="dim">暂无请求</td></tr>'}</table>
     ${logs.length>20?`<div style="padding:8px 10px"><button class="ghost mini" onclick="_logAll=!_logAll;loadLogs()">${_logAll?"收起，只显示最近 20 条":"展开全部 "+logs.length+" 条"}</button></div>`:""}</div>`;
+  _logOpen.forEach(i=>{const tr=logSubRow(i);if(tr)document.getElementById("lrow_"+i).after(tr)});
 }
 async function loadDiag(){
   const hres=await fetch("/health",{headers:authHeaders()});
@@ -545,8 +594,8 @@ async function loadDiag(){
   <div class="card"><h3>运维提示</h3><div class="kv">
     <b>token 来源</b><span>env <span class="mono">ZCODE_TOKEN</span> &gt; 本目录 <span class="mono">token.json</span> &gt; <span class="mono">~/.zcode/v2/config.json</span> 的 start-plan apiKey</span>
     <b>401 处理</b><span>运行 <span class="mono">./zcode2api-go.exe login</span> 重新授权；CLI/GUI 重登后网关会自动重读，无需重启</span>
-    <b>502（3012）</b><span>system 白名单前缀失效，ZCode 客户端大版本更新后需重新抓包提取 <span class="mono">prefix.json</span></span>
-    <b>429</b><span>上游限流/额度耗尽；账号池模式下失败账号会自动冷却换号</span>
+    <b>502（3012）</b><span>IP 级风控拒绝（upstream_waf）：本机出口 IP 被上游 WAF 盯上，换住宅代理出口（<span class="mono">HTTPS_PROXY</span>）解决；账号池模式下全池不可用也会报 502 no available account，看日志页错误详情分辨</span>
+    <b>429（3008）</b><span>user 级并发上限：单号自动冷却 60s 并换号，不拖累全池；3012/405 等真 IP 级信号才设全局退避闸</span>
   </div></div>`;
   gtaSetProto("openai");
 }
