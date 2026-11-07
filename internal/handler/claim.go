@@ -43,26 +43,6 @@ func claimTargets(client *zcode.Client, only string) []string {
 	return labels
 }
 
-// poolJWT 按 label 取账号 JWT（池缺失时回退单账号 token，与 claimTargets 同构）。
-func poolJWT(client *zcode.Client, label string) string {
-	if client.Pool != nil {
-		for _, acc := range client.Pool.Accounts {
-			if acc.Label == label {
-				return acc.Token
-			}
-		}
-		return ""
-	}
-	return client.Token
-}
-
-// claimOneFunc 单号领取入口（测试替换接缝；串行与并发两条路径共用，
-// 保证台账/验证码/退避语义只此一份）。
-var claimOneFunc = func(jwt, mid string) string {
-	msg, _ := zcode.ClaimBestForToken(claimHTTP, jwt, mid)
-	return msg
-}
-
 // ClaimAllProgress 逐账号领取，每完成一个回调 res（面板任务用它更新进度）。
 // only 非空时只跑指定 label；onResult 可为 nil。
 func ClaimAllProgress(cfg *config.Config, client *zcode.Client, previewOnly bool, only string, onResult func(zcode.ClaimResult)) []zcode.ClaimResult {
@@ -110,45 +90,6 @@ func ClaimAllProgress(cfg *config.Config, client *zcode.Client, previewOnly bool
 		msg, _ := zcode.ClaimBestForToken(claimHTTP, jwt, mid)
 		emit(zcode.ClaimResult{Account: label, OK: true, Message: msg})
 	}
-	return out
-}
-
-// ClaimAllConcurrent 有界并发领取（投放监视的抢批路径）。
-// 并发上限默认 4：claim 限流是出口 IP 级（连领 4 个后第 5 个必撞，见
-// ClaimBestForToken 提交循环注释），全池齐发只会把整个批次推进 429 重试波次；
-// 有界并发让前 4 个号在验证码求解期间其余号排队，命中率与串行一致而墙钟时间
-// 缩短到约 1/4。parallel<=0 时取默认值。
-func ClaimAllConcurrent(cfg *config.Config, client *zcode.Client, only string, parallel int, onResult func(zcode.ClaimResult)) []zcode.ClaimResult {
-	if parallel <= 0 {
-		parallel = defaultClaimParallel
-	}
-	targets := claimTargets(client, only)
-	stateDir := claimStateDir()
-	sem := make(chan struct{}, parallel)
-	var mu sync.Mutex
-	out := []zcode.ClaimResult{}
-	var wg sync.WaitGroup
-	for _, label := range targets {
-		wg.Add(1)
-		go func(label string) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			jwt := poolJWT(client, label)
-			if jwt == "" {
-				return
-			}
-			mid := zcode.StableDeviceMid(stateDir, jwt)
-			r := zcode.ClaimResult{Account: label, OK: true, Message: claimOneFunc(jwt, mid)}
-			mu.Lock()
-			out = append(out, r)
-			mu.Unlock()
-			if onResult != nil {
-				onResult(r)
-			}
-		}(label)
-	}
-	wg.Wait()
 	return out
 }
 

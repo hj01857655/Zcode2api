@@ -381,22 +381,6 @@ func markClaimed(jwt, planID string) {
 	}
 }
 
-// AllClaimedToday 所有账号都已领过这批 plan_id（投放监视的跳过判据：
-// 投放还在但全池已领，不再发起抢批——触发后靠台账回到稳态，不重复打验证码）。
-func AllClaimedToday(jwts, planIDs []string) bool {
-	if len(planIDs) == 0 || len(jwts) == 0 {
-		return false
-	}
-	for _, jwt := range jwts {
-		for _, p := range planIDs {
-			if !isClaimedToday(jwt, p) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
 // ClaimBestForToken 对单个 JWT：补报激活 → touch 投放清单 → 领其中的套餐。
 // 幂等：1003（已领过）按成功处理；无投放返回 ok=false + 说明。
 // 不走 preview：桌面端领取链路的前置数据源唯一是 touch.query（CLAIM-FLOW.md §1.5）。

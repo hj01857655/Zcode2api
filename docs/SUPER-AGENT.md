@@ -100,17 +100,9 @@
 
 ## 3. 分期路线
 
-**第一期（P0，2-3 天）：事件驱动抢批 —— 已落地（2026-11-07）**
-- touch 5min 轮询 + 投放信号量 → 触发立即抢批（台账防重 + 有界并发 claim）；
-  实现：`internal/handler/watch.go`（detectDelivery 全池逐号 400ms 错峰轮询 →
-  AllClaimedToday 台账跳过 → ClaimAllConcurrent 抢批 → claimBatchCooldown 10min 静默）；
-- 领取结果 IM 播报：`internal/handler/notify.go` 企业微信群机器人 webhook
-  （`ZCODE_WEIXIN_WORK_WEBHOOK`，text 形态 600 rune 截断）；
-- 并发口径：默认 4（claim 限流是出口 IP 级，连领 4 个后第 5 个必撞——
-  全池齐发只会把批次推进 429 重试波次，有界并发命中率同串行而墙钟 ≈1/4）；
-- 环境：`ZCODE_CLAIM_WATCH=0` 单独关监视 / `ZCODE_WATCH_INTERVAL=300` /
-  `ZCODE_CLAIM_PARALLEL=4` / `ZCODE_WEIXIN_WORK_WEBHOOK`；
-- 固定 slot（19:05/20:05/21:05/22:05）保留兜底，claim/台账幂等两者不冲突；
+**第一期（P0，2-3 天）**：事件驱动抢批
+- touch 5min 轮询 + 投放信号量 → 触发立即抢批（全池并发 claim，台账防重）；
+- 领取结果 IM 播报（先做企业微信 webhook 最简形态）；
 - 收益：新批次投放瞬间开始抢，不再等 19:05 整点——**11-03 批次如果有
   这个，9 个号都能抢到**。
 

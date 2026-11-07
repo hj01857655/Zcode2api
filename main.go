@@ -12,7 +12,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -110,10 +109,6 @@ func serve() {
 				run("定时 " + next.Format("01-02 15:04"))
 			}
 		}()
-		// 事件驱动抢批（SUPER-AGENT.md 第一期）：5min touch 轮询，投放出现
-		// 立即全池并发领取 + 企业微信播报；台账防重，固定 slot 保留兜底。
-		// ZCODE_CLAIM_WATCH=0 单独关闭监视。
-		go handler.WatchDeliveryLoop(cfg, client, slog.Default())
 	}
 
 	addr := "127.0.0.1:" + strconv.Itoa(cfg.Port)
