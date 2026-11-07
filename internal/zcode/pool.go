@@ -1,4 +1,3 @@
-
 package zcode
 
 // 多账号池：token.json 存账号数组，按顺序选号，失败账号进入冷却。
@@ -53,9 +52,9 @@ type Pool struct {
 
 // 熔断参数（对齐 Rust：TRIP_WINDOW=10 / 80% / TRIP_COOLDOWN=10min / 连败 5）。
 const (
-	tripWindow      = 10
-	tripCooldown    = 10 * time.Minute
-	tripFailStreak  = 5
+	tripWindow     = 10
+	tripCooldown   = 10 * time.Minute
+	tripFailStreak = 5
 )
 
 // poolFile token.json 的持久化形状。
@@ -126,7 +125,7 @@ func (p *Pool) ReloadIfPoolStale() bool {
 	}
 	p.Accounts = pf.Accounts
 	p.Active = pf.Active
-	p.cool = map[string]time.Time{}  // 新凭据新状态
+	p.cool = map[string]time.Time{} // 新凭据新状态
 	p.hist = map[string][]bool{}
 	p.failStreak = map[string]int{}
 	// sticky 保留 label 映射（同 label 的会话继续命中，凭据已在 Accounts 里换新）
@@ -313,6 +312,18 @@ func (p *Pool) bindSticky(key, label string) {
 			delete(p.sticky, oldest)
 		}
 	}
+}
+
+// StickyCount 返回绑定表拷贝（key→label），诊断观测用：直通路径的亲和
+// 表应该只有客户端真实 user_id 进来，混入其它形状的键说明有调用点传错了键。
+func (p *Pool) StickyCount() map[string]string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make(map[string]string, len(p.sticky))
+	for k, v := range p.sticky {
+		out[k] = v
+	}
+	return out
 }
 
 // Cooldown 让某账号冷却一段时间。

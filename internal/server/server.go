@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -98,8 +99,12 @@ func startKeepalive(lk *sseLock, interval time.Duration) func() {
 // （CLI/GUI 在别的进程重登后 credentials.json 已刷新，网关无需重启）。
 // 重试只发生在向下游写出任何字节之前，流式/非流式都安全。
 // 返回值多带 account：池模式实际命中的账号 label（日志记账回填 Obs 用）。
-func (s *Server) upstreamMessages(body []byte) (*http.Response, string, error) {
-	resp, account, err := s.Client.MessagesWithAccount(body)
+// sticky 只在调用方持有客户端真实会话标识时非空（/v1/messages 直通路径的
+// metadata.user_id）；chat/responses 的 body 是网关造的随机 user_id，
+// 没有稳定会话标识，必须传空——进亲和表只会永远 miss 并把 LRU 里直通
+// 路径的真实绑定挤出去。
+func (s *Server) upstreamMessages(body []byte, sticky string) (*http.Response, string, error) {
+	resp, account, err := s.Client.MessagesWithAccount(body, sticky)
 	if err == nil {
 		return resp, account, nil
 	}
@@ -110,7 +115,7 @@ func (s *Server) upstreamMessages(body []byte) (*http.Response, string, error) {
 		}
 		if tok := loader(); tok != "" && tok != s.Client.Token {
 			s.Client.Token = tok
-			resp, _, err = s.Client.MessagesWithAccount(body)
+			resp, _, err = s.Client.MessagesWithAccount(body, sticky)
 			return resp, "", err // 单账号热替换后重试：无池账号标签
 		}
 	}
@@ -201,14 +206,20 @@ func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
-	seen := []map[string]any{}
+	// map 别名去重后按 id 稳定排序：map 遍历序随机，客户端缓存/对比需要确定序
+	ids := []string{}
 	dup := map[string]bool{}
 	for _, alias := range s.Cfg.ModelAlias {
 		v := zcode.MapModel(alias)
 		if !dup[v] {
 			dup[v] = true
-			seen = append(seen, map[string]any{"id": v, "object": "model", "owned_by": "zcode-start-plan"})
+			ids = append(ids, v)
 		}
+	}
+	sort.Strings(ids)
+	seen := make([]map[string]any, 0, len(ids))
+	for _, v := range ids {
+		seen = append(seen, map[string]any{"id": v, "object": "model", "owned_by": "zcode-start-plan"})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": seen})
@@ -219,9 +230,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	// auto_claim 开关与 main.go 定时器同源读取（ZCODE_AUTO_CLAIM=0 关闭）：
 	// 概览页「下次自动领取」配一个开关状态，免得关了还盯空时间
 	body := map[string]any{"usage_window": usageWindow(time.Now()),
-		"next_claim":  nextClaimTime(time.Now()).Format("01-02 15:04"),
-		"auto_claim":  os.Getenv("ZCODE_AUTO_CLAIM") != "0",
-		"upstream":    s.Cfg.Upstream, "version": "2.1.0"}
+		"next_claim": nextClaimTime(time.Now()).Format("01-02 15:04"),
+		"auto_claim": os.Getenv("ZCODE_AUTO_CLAIM") != "0",
+		"upstream":   s.Cfg.Upstream, "version": "2.1.0"}
 	if s.Client.Pool != nil {
 		n := s.Client.Pool.Size()
 		body["ok"] = n > 0
@@ -372,7 +383,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 // aggregateChat 非流式：消费上游 SSE 聚合为单个 chat.completion（对齐 _collect_sse 路径）。
 func (s *Server) aggregateChat(w http.ResponseWriter, obs *zcode.Obs, model string, body []byte) {
-	resp, account, err := s.upstreamMessages(body)
+	resp, account, err := s.upstreamMessages(body, "")
 	if err != nil {
 		obs.SetAccount(account)
 		obs.Done(502, upStatusOf(err), "error", 0, 0, 0, 0, err.Error())
@@ -386,7 +397,9 @@ func (s *Server) aggregateChat(w http.ResponseWriter, obs *zcode.Obs, model stri
 	defer resp.Body.Close()
 	obs.UpStatus = resp.StatusCode
 
-	text, reasoning, finish := "", "", ""
+	// 聚合用 Builder：流式增量几百到几千帧，string += 每帧都整段拷贝，O(n²)
+	var text, reasoning strings.Builder
+	finish := ""
 	acc := newToolAccum()
 	var in, out, tcr, tcw int
 	sc := bufio.NewScanner(resp.Body)
@@ -426,8 +439,8 @@ func (s *Server) aggregateChat(w http.ResponseWriter, obs *zcode.Obs, model stri
 			continue
 		}
 		acc.add(d)
-		text += d.Content
-		reasoning += d.Reason
+		text.WriteString(d.Content)
+		reasoning.WriteString(d.Reason)
 		if d.Finish != "" {
 			finish = d.Finish
 		}
@@ -443,7 +456,7 @@ func (s *Server) aggregateChat(w http.ResponseWriter, obs *zcode.Obs, model stri
 		finish = zcode.MapStop("") // 上游未给 stop_reason 时兜底 stop
 	}
 	frame := zcode.CompletionFrame(
-		"chatcmpl-"+zcode.UUIDv4()[:24], model, text, reasoning, finish, in, out)
+		"chatcmpl-"+zcode.UUIDv4()[:24], model, text.String(), reasoning.String(), finish, in, out)
 	if !acc.empty() {
 		if ch, ok := frame["choices"].([]any); ok && len(ch) > 0 {
 			if c0, ok := ch[0].(map[string]any); ok {
@@ -467,7 +480,7 @@ func upStatusOf(err error) int {
 	return 0
 }
 func (s *Server) streamChat(w http.ResponseWriter, obs *zcode.Obs, model string, body []byte) {
-	resp, account, err := s.upstreamMessages(body)
+	resp, account, err := s.upstreamMessages(body, "")
 	if err != nil {
 		// 对齐 Python：失败也以 SSE error 帧 + [DONE] 收尾
 		obs.Done(200, upStatusOf(err), "error", 0, 0, 0, 0, err.Error())

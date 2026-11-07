@@ -61,11 +61,15 @@ type RequestLog struct {
 // LogSink 请求日志汇：内存环形缓冲（admin 页读）+ JSONL 追加落盘。
 // 落盘按大小轮转（RotateMB，0 = 关闭）：超限改名 .1（单代，覆盖旧 .1），
 // 对齐 zcode-switch 网关 log_file_max_mb 行为，防长期运行日志无限膨胀。
+// 写句柄持久打开、轮转判断用记账字节数——每条 Open+Close+Stat 是纯浪费：
+// 请求日志进程生命周期内高频写，只有轮转那一刻才需要动文件本身。
 type LogSink struct {
-	mu        sync.Mutex
-	path      string // 空 = 不落盘
-	ring      []RequestLog
-	RotateMB  int64
+	mu       sync.Mutex
+	path     string // 空 = 不落盘
+	ring     []RequestLog
+	RotateMB int64
+	f        *os.File // 持久写句柄，惰性打开；Windows 下 rename 打开中的文件会失败，轮转前必须先关
+	written  int64    // 当前文件已写字节数（启动时从 Stat 初始化），轮转判断记账用
 }
 
 // NewLogSink path 为空则只进内存环形缓冲；rotateMB>0 时落盘按大小轮转。
@@ -73,7 +77,34 @@ func NewLogSink(path string, rotateMB int64) *LogSink {
 	if path != "" {
 		_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	}
-	return &LogSink{path: path, ring: make([]RequestLog, 0, 256), RotateMB: rotateMB}
+	s := &LogSink{path: path, ring: make([]RequestLog, 0, 256), RotateMB: rotateMB}
+	if path != "" {
+		if st, err := os.Stat(path); err == nil {
+			s.written = st.Size()
+		}
+	}
+	return s
+}
+
+// openLocked 惰性打开持久写句柄；O_APPEND 保证重开后追加位置正确。
+func (s *LogSink) openLocked() error {
+	if s.f != nil {
+		return nil
+	}
+	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	s.f = f
+	return nil
+}
+
+// closeLocked 收掉句柄（幂等）。
+func (s *LogSink) closeLocked() {
+	if s.f != nil {
+		_ = s.f.Close()
+		s.f = nil
+	}
 }
 
 // Record 写一条日志：追加 JSONL + 内存 ring（保留最近 512 条）。
@@ -90,22 +121,42 @@ func (s *LogSink) Record(l RequestLog) {
 	if s.path == "" {
 		return
 	}
-	// 轮转：写入前检查（低频检查足够，日志行 KB 级）；超限 → path.1 覆盖旧代
-	if s.RotateMB > 0 {
-		if st, err := os.Stat(s.path); err == nil && st.Size() >= s.RotateMB<<20 {
-			_ = os.Rename(s.path, s.path+".1")
-		}
-	}
 	b, err := json.Marshal(l)
 	if err != nil {
 		return
 	}
-	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
+	b = append(b, '\n')
+	// 轮转：按记账字节数判断；超限 → path.1 覆盖旧代。
+	// Windows 不允许 rename 打开中的文件，先关句柄；written>0 才轮转，
+	// 防「文件被外部删掉后记账没归零」导致刚重开的空文件立刻被改名
+	if s.RotateMB > 0 && s.written > 0 && s.written+int64(len(b)) > s.RotateMB<<20 {
+		s.closeLocked()
+		_ = os.Rename(s.path, s.path+".1")
+		s.written = 0
+	}
+	if err := s.openLocked(); err != nil {
 		return
 	}
-	defer f.Close()
-	_, _ = f.Write(append(b, '\n'))
+	n, err := s.f.Write(b)
+	if err != nil {
+		// 写失败（文件被外部挪走/句柄失效）→ 重开一次再试；再失败放弃本条
+		s.closeLocked()
+		if err := s.openLocked(); err != nil {
+			return
+		}
+		n, err = s.f.Write(b)
+		if err != nil {
+			return
+		}
+	}
+	s.written += int64(n)
+}
+
+// Close 收尾落盘句柄（进程正常退出时调用；不调用也不丢数据，OS 兜底 flush）。
+func (s *LogSink) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closeLocked()
 }
 
 // Recent 返回最近 n 条（新的在前）；n<=0 返回全部 ring。

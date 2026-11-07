@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -67,11 +68,27 @@ type Client struct {
 // New 装配默认客户端。TotalTimeout>0 时作为整体超时兜底
 // （http.Client.Timeout 语义=建连到读完 body 的全程，正合兜底需求；
 // 不用 per-request context——defer cancel 会在流式 body 读取前掐断）。
+// Transport 显式调优：默认 http.Client 复用 DefaultTransport，其
+// MaxIdleConnsPerHost=2——池模式对单一上游 host 并发 14 路，超出 2 条的
+// 空闲连接用完即关，下一请求重拨+TLS 握手，纯浪费。这里把单 host 空闲
+// 连接池抬高并保持 HTTP2 尝试与系统代理语义。
 func New(base, token string) *Client {
 	return &Client{
 		Base:  base,
 		Token: token,
-		HTTP:  &http.Client{Timeout: 300 * time.Second},
+		HTTP: &http.Client{
+			Timeout: 300 * time.Second,
+			Transport: &http.Transport{
+				Proxy:                 http.ProxyFromEnvironment,
+				ForceAttemptHTTP2:     true,
+				MaxIdleConns:          128,
+				MaxIdleConnsPerHost:   32,
+				IdleConnTimeout:       90 * time.Second,
+				DialContext:           (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ExpectContinueTimeout: time.Second,
+			},
+		},
 	}
 }
 
@@ -103,9 +120,12 @@ func (e *UpstreamError) Error() string {
 	return fmt.Sprintf("upstream %d: %s", e.Status, e.Body)
 }
 
-// stickyKey 从 Anthropic body 提取会话亲和键（metadata.user_id）。
-// agent 客户端全程携带同一 user_id——同会话固定同号，上下文缓存命中率高；
-// 缺失/解析失败返回空（退化为普通轮转）。
+// stickyKey 从客户端原样 body 提取会话亲和键（metadata.user_id）。
+// 只在 /v1/messages 直通路径调用——该路径的 user_id 是客户端（Claude Code/
+// Cline 等 agent）全程携带的稳定值，同会话固定同号，上下文缓存命中率高。
+// chat/responses 路径不调用：它们的 body 由 BuildAnthropicBody 生成，
+// user_id 每请求随机（终版语义），拿它做亲和键永远 miss 还会把
+// sticky LRU 表挤满垃圾键，把直通路径的真实绑定逐出去。
 func stickyKey(body []byte) string {
 	var m struct {
 		Metadata struct {
@@ -118,17 +138,19 @@ func stickyKey(body []byte) string {
 	return ""
 }
 
-// Messages 发送 anthropic 协议 body（已序列化的 JSON），返回上游 SSE 响应。
+// MessagesWithAccount 发送 anthropic 协议 body（已序列化的 JSON），返回上游 SSE 响应。
 // 语义对齐终版 server.py：无论下游请求流式与否，上游一律 stream=true，
 // 非流式由 handler 聚合——绕开 stream:false 的未知行为。
-// Messages 发送 anthropic 协议 body，返回上游响应。
 // Pool 非 nil 时按池选号；遇到 401/429/3012/3008 自动冷却该账号并换下一个重试（最多一轮）。
 // 池模式 401 先尝试热重读 token.json（CLI/GUI 别进程重登后凭据已刷新），读到新凭据重试。
 // 200+JSON 业务错误体（非 SSE，如 1005 exceed quota）转 UpstreamError——
 // 与 hub 网关 11-04 修复同根：这种错误体被当流解析会让客户端拿到空 content 的 200。
+// sticky 为会话亲和键：只在调用方持有客户端真实会话标识时传入（/v1/messages
+// 直通路径的 metadata.user_id）；传空 = 纯轮转（chat/responses 的 body 是
+// 网关造的随机 user_id，没有稳定会话标识，进亲和表只会污染 LRU）。
 // AccountField 返回实际命中的账号 label（单账号模式为空）——日志记账用：
 // Obs 在 handler 构造时还不知道选了哪个号，请求结束后由调用方回填。
-func (c *Client) MessagesWithAccount(body []byte) (*http.Response, string, error) {
+func (c *Client) MessagesWithAccount(body []byte, sticky string) (*http.Response, string, error) {
 	if c.Pool == nil || c.Pool.Size() == 0 {
 		resp, err := c.send(c.Token, body)
 		return resp, "", err
@@ -140,7 +162,7 @@ func (c *Client) MessagesWithAccount(body []byte) (*http.Response, string, error
 	var lastErr error
 	lastLabel := ""
 	for i := 0; i < tries; i++ {
-		acc, ok := c.Pool.PickSticky(stickyKey(body)) // 会话亲和：同 user_id 固定同号
+		acc, ok := c.Pool.PickSticky(sticky) // 会话亲和：客户端真实 user_id 固定同号
 		if !ok {
 			break // 全局风控闸或全冷却：fail-fast
 		}
@@ -177,9 +199,9 @@ func (c *Client) MessagesWithAccount(body []byte) (*http.Response, string, error
 	return nil, lastLabel, lastErr
 }
 
-// Messages 兼容入口（不回填账号）：内部走 MessagesWithAccount。
+// Messages 兼容入口（不回填账号、无亲和）：内部走 MessagesWithAccount。
 func (c *Client) Messages(body []byte) (*http.Response, error) {
-	resp, _, err := c.MessagesWithAccount(body)
+	resp, _, err := c.MessagesWithAccount(body, "")
 	return resp, err
 }
 

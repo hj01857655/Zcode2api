@@ -243,7 +243,7 @@ func jwtPayload(jwt string) ([]byte, bool) {
 // 每日重置，不能只留数字三件套。
 type BalanceEntry struct {
 	Plan          string   `json:"plan"`
-	Model         string   `json:"model"`      // show_name
+	Model         string   `json:"model"` // show_name
 	BucketID      string   `json:"bucket_id,omitempty"`
 	EntitlementID string   `json:"entitlement_id,omitempty"`
 	Meter         string   `json:"meter,omitempty"`

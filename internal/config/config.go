@@ -26,12 +26,12 @@ type Config struct {
 	AdminPassword string `json:"admin_password"`
 	// RequestLogRotateMB request.log 轮转上限（MB）：超限改名 .1（单代）。0 = 关闭。
 	RequestLogRotateMB int `json:"request_log_rotate_mb"`
-	RequestLog    string
+	RequestLog         string
 	// TotalTimeoutSecs 单次上游请求（含响应体读取）的整体超时兜底；
 	// 0 = 关闭。对齐 zcode-switch 网关 total_timeout_secs。
 	TotalTimeoutSecs int `json:"total_timeout_secs"`
 	// KeepaliveSecs 流式空闲心跳间隔（SSE 注释帧）；0 = 关闭。
-	KeepaliveSecs int `json:"keepalive_secs"`
+	KeepaliveSecs int    `json:"keepalive_secs"`
 	DumpDir       string // 上游请求/响应落盘目录，空 = 关闭
 	DumpMaxFiles  int
 }
@@ -48,11 +48,11 @@ func Default() *Config {
 			"glm-5.3-flash": "GLM-5.3-Flash",
 			"glm-5.3":       "GLM-5.3",
 		},
-		RequestLog:   "request.log",
+		RequestLog: "request.log",
 		// 日志轮转默认 64MB：长期运行防膨胀，单代 .1 备份（对齐 hub log_file_max_mb=16 的同类兜底）
 		RequestLogRotateMB: 64,
-		DumpDir:      "dumps",
-		DumpMaxFiles: 200,
+		DumpDir:            "dumps",
+		DumpMaxFiles:       200,
 
 		TotalTimeoutSecs: 600, // 对齐 Rust 网关 total_timeout_secs 默认
 		KeepaliveSecs:    15,  // 对齐 Rust 网关 keepalive_secs 默认

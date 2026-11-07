@@ -323,7 +323,7 @@ func responsesObjectWithTools(id, model, text, status string, in, out int, tc *t
 
 // aggregateResponses 非流式：聚合上游 SSE → 单个 response 对象。
 func (s *Server) aggregateResponses(w http.ResponseWriter, obs *zcode.Obs, model string, body []byte) {
-	resp, account, err := s.upstreamMessages(body)
+	resp, account, err := s.upstreamMessages(body, "")
 	if err != nil {
 		obs.SetAccount(account)
 		obs.Done(502, upStatusOf(err), "error", 0, 0, 0, 0, err.Error())
@@ -336,7 +336,7 @@ func (s *Server) aggregateResponses(w http.ResponseWriter, obs *zcode.Obs, model
 	}
 	defer resp.Body.Close()
 	obs.UpStatus = resp.StatusCode
-	text := ""
+	var text strings.Builder // 聚合用 Builder，避免逐帧 string += 的 O(n²) 拷贝
 	var in, out, tcr, tcw float64
 	acc := newToolAccum()
 	sc := bufio.NewScanner(resp.Body)
@@ -371,21 +371,21 @@ func (s *Server) aggregateResponses(w http.ResponseWriter, obs *zcode.Obs, model
 			tcw = *d.CacheCreation
 		}
 		acc.add(d)
-		text += d.Content
+		text.WriteString(d.Content)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	var tcPtr *toolAccum
 	if !acc.empty() {
 		tcPtr = acc
 	}
-	_ = json.NewEncoder(w).Encode(responsesObjectWithTools("resp_"+zcode.UUIDv4()[:24], model, text, "completed", int(in), int(out), tcPtr))
+	_ = json.NewEncoder(w).Encode(responsesObjectWithTools("resp_"+zcode.UUIDv4()[:24], model, text.String(), "completed", int(in), int(out), tcPtr))
 	obs.SetAccount(account)
 	obs.Done(200, resp.StatusCode, "completed", int64(in), int64(out), int64(tcr), int64(tcw), "")
 }
 
 // streamResponses 流式：Anthropic SSE → Responses 事件集。
 func (s *Server) streamResponses(w http.ResponseWriter, obs *zcode.Obs, model string, body []byte) {
-	resp, account, err := s.upstreamMessages(body)
+	resp, account, err := s.upstreamMessages(body, "")
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	if err != nil {
@@ -419,7 +419,7 @@ func (s *Server) streamResponses(w http.ResponseWriter, obs *zcode.Obs, model st
 		"item": map[string]any{"id": mid, "type": "message", "status": "in_progress", "role": "assistant", "content": []any{}},
 	})
 
-	text := ""
+	var text strings.Builder // 终态 response 对象复用聚合文本
 	var in, out, tcr, tcw float64
 	finish := ""
 	acc := newToolAccum()
@@ -478,7 +478,7 @@ func (s *Server) streamResponses(w http.ResponseWriter, obs *zcode.Obs, model st
 			})
 		}
 		if d.Content != "" {
-			text += d.Content
+			text.WriteString(d.Content)
 			sse(lk, map[string]any{
 				"type": "response.output_text.delta", "item_id": mid, "output_index": 0,
 				"content_index": 0, "delta": d.Content,
@@ -489,12 +489,12 @@ func (s *Server) streamResponses(w http.ResponseWriter, obs *zcode.Obs, model st
 	if !acc.empty() {
 		tcPtr = acc
 	}
-	obj := responsesObjectWithTools(rid, model, text, "completed", int(in), int(out), tcPtr)
+	obj := responsesObjectWithTools(rid, model, text.String(), "completed", int(in), int(out), tcPtr)
 	sse(w, map[string]any{
 		"type": "response.output_item.done", "output_index": 0,
 		"item": map[string]any{
 			"id": mid, "type": "message", "status": "completed", "role": "assistant",
-			"content": []map[string]any{{"type": "output_text", "text": text, "annotations": []any{}}},
+			"content": []map[string]any{{"type": "output_text", "text": text.String(), "annotations": []any{}}},
 		},
 	})
 	sse(w, map[string]any{"type": "response.completed", "response": obj})

@@ -75,7 +75,16 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// metadata.user_id 形状（风控不校验内容，补齐形状）
+	// metadata.user_id 形状（风控不校验内容，补齐形状）。
+	// 客户端自带的 user_id 是全程稳定的会话标识（Claude Code/Cline 等 agent），
+	// 记下来给池选号做亲和——同会话固定同号，上下文缓存命中率高。
+	// 客户端没传时补的是每请求随机值，不能当亲和键（没有稳定性）。
+	clientUserID := ""
+	if md, ok := req["metadata"].(map[string]any); ok {
+		if uid, ok := md["user_id"].(string); ok {
+			clientUserID = uid
+		}
+	}
 	if _, ok := req["metadata"]; !ok {
 		req["metadata"] = map[string]any{"user_id": zcode.UserIDString(zcode.UUIDv4())}
 	}
@@ -98,15 +107,15 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		model = m
 	}
 	if !clientStream {
-		s.aggregateMessages(w, zcode.NewObs(s.Log, "anthropic", false, model, r.UserAgent()), model, body)
+		s.aggregateMessages(w, zcode.NewObs(s.Log, "anthropic", false, model, r.UserAgent()), model, body, clientUserID)
 		return
 	}
-	s.passthroughMessages(w, zcode.NewObs(s.Log, "anthropic", true, model, r.UserAgent()), body)
+	s.passthroughMessages(w, zcode.NewObs(s.Log, "anthropic", true, model, r.UserAgent()), body, clientUserID)
 }
 
 // aggregateMessages 非流式：聚合上游 SSE → Anthropic message 形状。
-func (s *Server) aggregateMessages(w http.ResponseWriter, obs *zcode.Obs, model string, body []byte) {
-	resp, account, err := s.upstreamMessages(body)
+func (s *Server) aggregateMessages(w http.ResponseWriter, obs *zcode.Obs, model string, body []byte, clientUserID string) {
+	resp, account, err := s.upstreamMessages(body, clientUserID)
 	if err != nil {
 		obs.SetAccount(account)
 		obs.Done(502, upStatusOf(err), "error", 0, 0, 0, 0, err.Error())
@@ -121,7 +130,8 @@ func (s *Server) aggregateMessages(w http.ResponseWriter, obs *zcode.Obs, model 
 	obs.UpStatus = resp.StatusCode
 
 	var content []map[string]any
-	var text, thinking, stop string
+	var text, thinking strings.Builder // 聚合用 Builder，避免逐帧 string += 的 O(n²) 拷贝
+	var stop string
 	var in, out, tcr, tcw int
 	acc := newToolAccum()
 	sc := bufio.NewScanner(resp.Body)
@@ -156,14 +166,14 @@ func (s *Server) aggregateMessages(w http.ResponseWriter, obs *zcode.Obs, model 
 			tcw = int(*d.CacheCreation)
 		}
 		acc.add(d)
-		thinking += d.Reason
-		text += d.Content
+		thinking.WriteString(d.Reason)
+		text.WriteString(d.Content)
 		if d.Finish != "" {
 			stop = d.Finish
 		}
 	}
-	if thinking != "" {
-		content = append(content, map[string]any{"type": "thinking", "thinking": thinking})
+	if thinking.Len() > 0 {
+		content = append(content, map[string]any{"type": "thinking", "thinking": thinking.String()})
 	}
 	// tool_use 块（Anthropic 原生形状：id / name / input 对象）
 	for _, idx := range acc.order {
@@ -181,8 +191,8 @@ func (s *Server) aggregateMessages(w http.ResponseWriter, obs *zcode.Obs, model 
 			"type": "tool_use", "id": c["id"], "name": c["name"], "input": input,
 		})
 	}
-	if text != "" || len(content) == 0 {
-		content = append(content, map[string]any{"type": "text", "text": text})
+	if text.Len() > 0 || len(content) == 0 {
+		content = append(content, map[string]any{"type": "text", "text": text.String()})
 	}
 	if !acc.empty() {
 		stop = "tool_use"
@@ -201,8 +211,8 @@ func (s *Server) aggregateMessages(w http.ResponseWriter, obs *zcode.Obs, model 
 }
 
 // passthroughMessages 流式：原样透传上游 SSE 字节流。
-func (s *Server) passthroughMessages(w http.ResponseWriter, obs *zcode.Obs, body []byte) {
-	resp, account, err := s.upstreamMessages(body)
+func (s *Server) passthroughMessages(w http.ResponseWriter, obs *zcode.Obs, body []byte, clientUserID string) {
+	resp, account, err := s.upstreamMessages(body, clientUserID)
 	if err != nil {
 		obs.SetAccount(account)
 		obs.Done(502, upStatusOf(err), "error", 0, 0, 0, 0, err.Error())
@@ -225,8 +235,6 @@ func (s *Server) passthroughMessages(w http.ResponseWriter, obs *zcode.Obs, body
 	lk := newSSELock(w)
 	stopKA := startKeepalive(lk, time.Duration(s.Cfg.KeepaliveSecs)*time.Second)
 	defer stopKA()
-	flusher, _ := w.(http.Flusher)
-	_ = flusher
 	buf := make([]byte, 16*1024)
 	for {
 		n, err := resp.Body.Read(buf)

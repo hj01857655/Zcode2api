@@ -427,8 +427,8 @@ type Delta struct {
 	// token 四元组补全：cache 读写（上游 message_start.usage 的
 	// cache_read_input_tokens / cache_creation_input_tokens）。观测对齐
 	// zcode-switch 网关的 tin/tout/tcr/tcw 四元组。
-	CacheRead      *float64
-	CacheCreation  *float64
+	CacheRead     *float64
+	CacheCreation *float64
 
 	// 工具调用：上游 content_block_start(tool_use) 给 id/name，随后 input_json_delta 分批给参数。
 	BlockIndex int    // 上游 content block index（对应 OpenAI tool_calls[].index）
