@@ -48,7 +48,14 @@ type Pool struct {
 	path string
 	// reloadOn401 池模式热重读开关：单账号模式走 Client.Token 路径，不启用
 	reloadOn401 bool
+	// inflight 在飞请求计数：label → 正在进行的请求数。3008（user concurrency
+	// limit exceeded）是 user 级并发上限——多请求并发挤同号必然触发。选号时跳过
+	// 在飞满的号，从调度层掐死触发条件（对齐 hub 网关 pool.rs MAX_INFLIGHT 语义）。
+	inflight map[string]uint32
 }
+
+// maxInflightPerAccount 单号在飞请求上限：多客户端挤同号会撞 3008/3009/3010 并发档。
+const maxInflightPerAccount = 2
 
 // 熔断参数（对齐 Rust：TRIP_WINDOW=10 / 80% / TRIP_COOLDOWN=10min / 连败 5）。
 const (
@@ -67,7 +74,7 @@ type poolFile struct {
 // 兼容两种形状：新 {"accounts":[...]} 与旧 {"provider","token","saved_at"}。
 // path 记入池：池模式 401 时热重读（ReloadIfPoolStale）。
 func LoadPool(path string) *Pool {
-	p := &Pool{cool: map[string]time.Time{}, hist: map[string][]bool{}, failStreak: map[string]int{}, sticky: map[string]string{}, path: path}
+	p := &Pool{cool: map[string]time.Time{}, hist: map[string][]bool{}, failStreak: map[string]int{}, sticky: map[string]string{}, inflight: map[string]uint32{}, path: path}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return p
@@ -206,6 +213,8 @@ func (p *Pool) GlobalBackoffRemaining() time.Duration {
 
 // Pick 取下一个可用账号（轮转起点 + 跳过冷却 + 全局退避闸）。
 // 返回 ok=false 的两种原因由 GlobalBackoffRemaining 区分。
+// 选号四闸：全局风控闸 + 冷却 + 在飞上限（3008 防御——user 级并发限制
+// 在调度层掐死触发条件，而不是等 429 回来被动换号）。
 func (p *Pool) Pick() (Account, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -217,26 +226,38 @@ func (p *Pool) Pick() (Account, bool) {
 	}
 	now := time.Now()
 	n := len(p.Accounts)
+	allCooling := true // 循环走完仍为 true = 没有任何非冷却号（含跳过的）
 	for i := 0; i < n; i++ {
 		idx := (p.cursor + i) % n
 		a := p.Accounts[idx]
 		if until, bad := p.cool[a.Label]; bad && now.Before(until) {
 			continue
 		}
+		allCooling = false
+		if p.inflight[a.Label] >= maxInflightPerAccount {
+			continue // 在飞满：3008 防御，换下一个号
+		}
+		p.inflight[a.Label]++
 		p.cursor = (idx + 1) % n
 		return a, true
 	}
-	// 全冷却：取最早解冻的那个（避免整体不可用）
-	best, bestUntil := 0, time.Time{}
-	for i, a := range p.Accounts {
-		if until, bad := p.cool[a.Label]; bad {
-			if bestUntil.IsZero() || until.Before(bestUntil) {
-				best, bestUntil = i, until
+	// 全冷却兜底（避免整体不可用）：仅当确实没有任何非冷却号时放行冷却号；
+	// 若是「可用号在飞全满」则 fail-fast（3008 防御语义——把冷却号放出去
+	// 等于放弃防御），client 侧落 503 no available account，稍后重试。
+	// PickSticky 的全冷却分支同理。
+	if allCooling {
+		best, bestUntil := 0, time.Time{}
+		for i, a := range p.Accounts {
+			if until, bad := p.cool[a.Label]; bad {
+				if bestUntil.IsZero() || until.Before(bestUntil) {
+					best, bestUntil = i, until
+				}
 			}
 		}
+		p.cursor = (best + 1) % n
+		return p.Accounts[best], true
 	}
-	p.cursor = (best + 1) % n
-	return p.Accounts[best], true
+	return Account{}, false
 }
 
 // stickyLimit 绑定表上限：超过即整体清空（防长驻进程无限增长；
@@ -244,7 +265,8 @@ func (p *Pool) Pick() (Account, bool) {
 const stickyLimit = 1024
 
 // PickSticky 会话亲和选号：key 为空退化为普通轮转。
-// 绑定命中（账号存在且不在冷却/退避）直接复用；否则轮转取号并重绑。
+// 绑定命中（账号存在且不在冷却/退避/在飞满）直接复用；否则轮转取号并重绑。
+// 在飞上限与 Pick 同闸：会话亲和不能豁免 3008 防御——绑定号在飞满时照样换号。
 func (p *Pool) PickSticky(key string) (Account, bool) {
 	if key == "" {
 		return p.Pick()
@@ -257,7 +279,7 @@ func (p *Pool) PickSticky(key string) (Account, bool) {
 	if time.Now().Before(p.globalUntil) {
 		return Account{}, false
 	}
-	// 命中校验：绑定号仍存在且可用
+	// 命中校验：绑定号仍存在且可用（冷却/在飞满均判失效，走轮转重绑）
 	if label, bad := p.sticky[key]; bad {
 		for _, a := range p.Accounts {
 			if a.Label != label {
@@ -266,36 +288,51 @@ func (p *Pool) PickSticky(key string) (Account, bool) {
 			if until, cool := p.cool[a.Label]; cool && time.Now().Before(until) {
 				break // 绑定号在冷却，走轮转重绑
 			}
+			if p.inflight[label] >= maxInflightPerAccount {
+				break // 绑定号在飞满：3008 防御，走轮转重绑
+			}
+			p.inflight[label]++
 			return a, true // 复用绑定号（cursor 不动）
 		}
 	}
 	// 轮转取号
 	now := time.Now()
 	n := len(p.Accounts)
+	allCooling := true // 循环走完仍为 true = 没有任何非冷却号（含跳过的）
 	for i := 0; i < n; i++ {
 		idx := (p.cursor + i) % n
 		a := p.Accounts[idx]
 		if until, cool := p.cool[a.Label]; cool && now.Before(until) {
 			continue
 		}
+		allCooling = false
+		if p.inflight[a.Label] >= maxInflightPerAccount {
+			continue // 在飞满：3008 防御，换下一个号
+		}
+		p.inflight[a.Label]++
 		p.cursor = (idx + 1) % n
 		p.bindSticky(key, a.Label)
 		return a, true
 	}
-	// 全冷却：从最早解冻的号起轮转绑定（雷群效应修复）——所有新会话
-	// 落在不同号上，解冻瞬间不会全部挤到同一个号
-	best, bestUntil := 0, time.Time{}
-	for i, a := range p.Accounts {
-		if until, cool := p.cool[a.Label]; cool {
-			if bestUntil.IsZero() || until.Before(bestUntil) {
-				best, bestUntil = i, until
+	// 全冷却兜底（避免整体不可用）：仅当确实没有任何非冷却号时，从最早解冻的号
+	// 起轮转绑定（雷群效应修复——所有新会话落在不同号上，解冻瞬间不会全部挤到
+	// 同一个号）；若是「可用号在飞全满」则 fail-fast（3008 防御语义），client 侧
+	// 落 503 no available account，稍后重试。
+	if allCooling {
+		best, bestUntil := 0, time.Time{}
+		for i, a := range p.Accounts {
+			if until, cool := p.cool[a.Label]; cool {
+				if bestUntil.IsZero() || until.Before(bestUntil) {
+					best, bestUntil = i, until
+				}
 			}
 		}
+		a := p.Accounts[(best+len(p.sticky))%n] // 按 sticky 数量偏移：新会话错开落号
+		p.cursor = (best + 1) % n
+		p.bindSticky(key, a.Label)
+		return a, true
 	}
-	a := p.Accounts[(best+len(p.sticky))%n] // 按 sticky 数量偏移：新会话错开落号
-	p.cursor = (best + 1) % n
-	p.bindSticky(key, a.Label)
-	return a, true
+	return Account{}, false
 }
 
 // bindSticky 写绑定表：LRU 逐出最旧绑定（stickyOrder 维护插入序）。
@@ -338,10 +375,15 @@ func (p *Pool) Cooldown(label string, d time.Duration) {
 
 // Settle 请求收尾记账：ok=false 时推进成功率窗口与连败计数，
 // 触发双闸任一即落 tripCooldown 长冷却并清连败（避免重复触发）。
-// 返回本次是否触发了熔断（调用方可用于日志）。
+// 同时释放在飞计数（Pick/PickSticky 的对称减 1）：非流式在 send 返回时
+// 上游已处理完毕；流式在 resp 拿到后上游开始吐流，并发占用窗口到此结束，
+// 语义足够。返回本次是否触发了熔断（调用方可用于日志）。
 func (p *Pool) Settle(label string, ok bool) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.inflight[label] > 0 {
+		p.inflight[label]--
+	}
 	if ok {
 		delete(p.failStreak, label)
 		h := p.hist[label]

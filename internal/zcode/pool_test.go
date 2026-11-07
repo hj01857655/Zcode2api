@@ -52,6 +52,9 @@ func TestPoolPickRotates(t *testing.T) {
 			t.Fatal("Pick 失败")
 		}
 		seen[a.Label] = true
+		// 新契约（在飞上限）：Pick 占用在飞名额，测试循环须 Settle 释放——
+		// 真实调用链 MessagesWithAccount 每轮 Pick 后都有 Settle
+		pool.Settle(a.Label, true)
 	}
 	if !seen["a"] || !seen["b"] {
 		t.Fatalf("Pick 应轮转两个账号, got %v", seen)
@@ -68,11 +71,13 @@ func TestPoolCooldownSkips(t *testing.T) {
 		if a.Label == "a" {
 			t.Fatalf("冷却中的账号不应被选中")
 		}
+		pool.Settle(a.Label, true) // 在飞释放（新契约）
 	}
 	if d := pool.CooldownRemaining("a"); d <= 0 {
 		t.Fatal("冷却剩余应为正")
 	}
 	pool.Cooldown("b", time.Minute)
+	// 全冷却兜底仍返回一个（最早解冻）——此时绕过在飞闸，无需 Settle
 	if _, ok := pool.Pick(); !ok {
 		t.Fatal("全冷却时也应返回一个（最早解冻）")
 	}
@@ -229,6 +234,8 @@ func TestPoolPickSticky(t *testing.T) {
 	if !ok || a3.Label == a1.Label {
 		t.Fatalf("绑定号冷却后应重绑到可用号, got %s", a3.Label)
 	}
+	// 在飞释放（新契约：Pick/PickSticky 占用名额，Settle 释放——真实调用链每轮后都有 Settle）
+	pool.Settle(a3.Label, true)
 	// 空 key 退化普通轮转（不 panic、有号）
 	if _, ok := pool.PickSticky(""); !ok {
 		t.Fatal("空 key 应退化轮转")

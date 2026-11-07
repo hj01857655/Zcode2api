@@ -169,17 +169,19 @@ func (c *Client) MessagesWithAccount(body []byte, sticky string) (*http.Response
 		lastLabel = acc.Label
 		resp, err := c.send(acc.Token, body)
 		if err == nil {
-			c.Pool.Settle(acc.Label, true)
+			c.Pool.Settle(acc.Label, true) // 在飞释放 + 熔断记账（Settle 内含对称减 1）
 			return resp, acc.Label, nil
 		}
 		lastErr = err
 		if ue, ok := err.(*UpstreamError); ok {
-			// 池模式 401：先热重读 token.json，拿到新凭据重试本轮
+			// 池模式 401：先热重读 token.json，拿到新凭据重试本轮。
+			// 401 热重读路径不落 Settle——本轮还没结束，在飞保持占用，换号重试
+			// 本身就是释放动作（下轮 PickSticky 选别的号）
 			if ue.Status == http.StatusUnauthorized && c.Pool.ReloadPoolStale() {
 				continue
 			}
 			d := cooldownFor(ue)
-			_ = c.Pool.Settle(acc.Label, false) // 熔断双闸记账（窗口/连败）
+			_ = c.Pool.Settle(acc.Label, false) // 在飞释放 + 熔断双闸记账（窗口/连败）
 			if d > 0 {
 				c.Pool.Cooldown(acc.Label, d)
 				// IP 级风控（405/3012）与 IP 级并发上限（3009/3010）设全局退避闸。

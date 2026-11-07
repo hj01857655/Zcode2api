@@ -42,15 +42,22 @@ func TestPoolPickStickyEmptyKeyDoesNotBind(t *testing.T) {
 	// 空 key = 纯轮转：绝不写绑定表。chat/responses 路径的 user_id 是
 	// 每请求随机值，进表只会污染 LRU，把直通路径的真实绑定逐出去
 	for i := 0; i < 10; i++ {
-		if _, ok := pool.PickSticky(""); !ok {
+		a, ok := pool.PickSticky("")
+		if !ok {
 			t.Fatal("空 key 应退化轮转且取到号")
 		}
+		// 新契约（在飞上限）：Pick 占用在飞名额，测试循环须 Settle 释放
+		pool.Settle(a.Label, true)
 	}
 	if len(pool.sticky) != 0 {
 		t.Fatalf("空 key 不得写绑定表, sticky=%v", pool.sticky)
 	}
 	// 非 key 才绑定
-	pool.PickSticky("sess-real")
+	a, ok := pool.PickSticky("sess-real")
+	if !ok {
+		t.Fatal("非空 key 应取到号")
+	}
+	defer pool.Settle(a.Label, true)
 	if pool.sticky["sess-real"] == "" {
 		t.Fatal("非空 key 应写入绑定表")
 	}
