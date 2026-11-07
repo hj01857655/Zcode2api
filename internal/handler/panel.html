@@ -124,6 +124,40 @@ details.fold>pre{margin:0;border-radius:0 0 6px 6px}
 .acc-row .v{font-family:var(--mono);font-size:12.5px;background:#0e1116;border:1px solid var(--hairline);border-radius:6px;padding:5px 9px;flex:1;min-width:0;overflow:auto;white-space:nowrap}
 button.mini{padding:3px 10px;font-size:12px}
 pre.acc-pre{white-space:pre-wrap;word-break:break-all;font:12px var(--mono);background:#0e1116;border:1px solid var(--hairline);border-radius:6px;padding:10px;margin:10px 0 0;max-height:340px;overflow:auto}
+/* ── 全局质感 ── */
+body{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+::selection{background:rgba(232,163,61,.32)}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#33363f;border-radius:5px;border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:#43464f;background-clip:padding-box}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-corner{background:transparent}
+button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--amber-deep);outline-offset:1px}
+/* 表格：行 hover、数字列右对齐等宽、状态 pill */
+tr:not(.subrow):not(.side-item){transition:background .12s}
+tr:not(.subrow):hover{background:rgba(233,231,225,.028)}
+th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
+.pill{display:inline-block;border-radius:99px;padding:0 8px;font-family:var(--mono);font-size:11.5px;font-weight:600;line-height:18px}
+.pill.ok{background:rgba(98,195,112,.13);color:var(--mint)}
+.pill.bad{background:rgba(224,82,82,.16);color:var(--err-soft)}
+.pill.warn{background:rgba(232,163,61,.14);color:var(--amber)}
+.stat .v{font-variant-numeric:tabular-nums}
+.stat{transition:border-color .15s}
+.stat:hover{border-color:rgba(233,231,225,.12)}
+/* toolbar 吸顶：滚动后操作与自动刷新始终可见 */
+.toolbar{position:sticky;top:0;z-index:10;background:var(--bg);border-bottom:1px solid var(--hairline-soft);margin:0 0;padding:10px 18px 8px}
+.content{padding-top:14px}
+/* 登录卡与 modal 同款顶条 */
+.login-card{position:relative;overflow:hidden}
+.login-card::before{content:"";position:absolute;top:0;left:0;right:0;height:2px;background:var(--amber)}
+/* 窄屏：收紧留白与字号，防止表格溢出破版 */
+@media (max-width:900px){
+  .content{padding:10px 10px 40px;max-width:none}
+  .toolbar{margin:0 10px}
+  th,td{padding:5px 6px;font-size:12px}
+  .kv{grid-template-columns:88px 1fr;font-size:12.5px}
+  .login-card{width:calc(100vw - 40px)}
+}
 /* ── 登录 ── */
 #login{position:fixed;inset:0;background:var(--bg);display:none;align-items:center;justify-content:center}
 .login-card{background:var(--panel);border:1px solid var(--hairline);border-radius:12px;padding:32px 36px;width:320px;text-align:center}
@@ -554,17 +588,17 @@ async function loadLogs(){
     <td>${esc(l.proto||"")}${l.stream?' <span class="dim">SSE</span>':""}</td>
     <td class="mono">${esc(l.model||"")}</td>
     <td>${esc(l.account||"—")}</td>
-    <td class="${l.status===200?"ok":"warn"}">${l.status||"—"}${l.up_status&&l.up_status!==l.status?` <span class="dim">up ${l.up_status}</span>`:""}</td>
+    <td>${l.status?`<span class="pill ${l.status===200?"ok":(l.status>=500?"bad":"warn")}">${l.status}</span>${l.up_status&&l.up_status!==l.status?` <span class="dim mono">up ${l.up_status}</span>`:""}`:'—'}</td>
     <td>${esc(l.finish||"")}</td>
-    <td class="mono">${l.ttft_ms?l.ttft_ms+"ms":"—"}</td>
-    <td class="mono">${l.total_ms??"—"}</td>
-    <td class="mono">${l.tin||0}/${l.tout||0}${l.tcr?`/${l.tcr}`:""}</td>
-    <td class="mono">${l.cost?("$"+l.cost.toFixed(6)):"—"}</td>
+    <td class="mono num">${l.ttft_ms?l.ttft_ms+"ms":"—"}</td>
+    <td class="mono num">${l.total_ms??"—"}</td>
+    <td class="mono num">${l.tin||0}/${l.tout||0}${l.tcr?`/${l.tcr}`:""}</td>
+    <td class="mono num">${l.cost?("$"+l.cost.toFixed(6)):"—"}</td>
     <td class="mono${l.err?" bad":""}" title="${esc(l.err||"")}">${esc((l.err||"").slice(0,40))}</td>
   </tr>`;
   $("#vLog").innerHTML=`<div class="card"><h3>请求日志 <span class="dim">（内存环最近 200 条 · 点击行展开完整字段 · 全量落盘 request.log）</span></h3>
     ${err?`<div class="warn">${esc(err)}</div>`:""}
-    <table><tr><th>时间</th><th>协议</th><th>模型</th><th>账号</th><th>状态</th><th>finish</th><th>TTFT</th><th>总耗时</th><th>in/out/cache</th><th>成本</th><th>错误</th></tr>
+    <table><tr><th>时间</th><th>协议</th><th>模型</th><th>账号</th><th>状态</th><th>finish</th><th class="num">TTFT</th><th class="num">总耗时</th><th class="num">in/out/cache</th><th class="num">成本</th><th>错误</th></tr>
     ${shown.length?shown.map(row).join(""):'<tr><td colspan="11" class="dim">暂无请求</td></tr>'}</table>
     ${logs.length>20?`<div style="padding:8px 10px"><button class="ghost mini" onclick="_logAll=!_logAll;loadLogs()">${_logAll?"收起，只显示最近 20 条":"展开全部 "+logs.length+" 条"}</button></div>`:""}</div>`;
   _logOpen.forEach(i=>{const tr=logSubRow(i);if(tr)document.getElementById("lrow_"+i).after(tr)});
