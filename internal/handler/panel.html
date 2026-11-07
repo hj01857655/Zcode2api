@@ -11,7 +11,7 @@
 --ink:#e9e7e1;--ink-dim:#b3b6bf;--ink-mute:#838794;
 --amber:#e8a33d;--amber-deep:#c9862a;--amber-ink:#241a09;--amber-hover:#f0b055;
 --mint:#62c370;--mint-dim:#3d8a4a;--red:#e05252;--red-dim:#8f3434;
---qbar-bg:#2b2e36;--qbar-pct:#97a1b4;--err-soft:#f0b9b9;--ok-soft:#8fd493;
+--qbar-bg:#2b2e36;--qbar-pct:#97a1b4;--err-soft:#f0b9b9;--ok-soft:#8fd493;--inset:#0e1116;
 --mono:"Cascadia Code","Consolas","SF Mono",monospace;
 --body:"Segoe UI","Microsoft YaHei UI","PingFang SC",sans-serif}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -22,7 +22,7 @@ button:hover:not(:disabled){background:var(--amber-hover)}
 button.ghost{background:var(--panel);border:1px solid var(--hairline);color:var(--ink-dim);font-weight:400;border-radius:7px;padding:7px 13px}
 button.ghost:hover:not(:disabled){color:var(--ink);border-color:color-mix(in srgb,var(--ink) 14%,transparent)}
 button:disabled{opacity:.5;cursor:wait}
-input{background:#0e1116;border:1px solid var(--hairline);border-radius:6px;color:var(--ink);padding:7px 10px;font-size:13px;width:180px;font-family:var(--body)}
+input{background:var(--inset);border:1px solid var(--hairline);border-radius:6px;color:var(--ink);padding:7px 10px;font-size:13px;width:180px;font-family:var(--body)}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--hairline-soft)}
 th{color:var(--ink-mute);font-weight:400;font-size:12px}
@@ -48,6 +48,8 @@ pre.mono{white-space:pre-wrap;word-break:break-all;margin:0;font-size:12px}
 .side-item:hover{background:var(--panel);color:var(--ink)}
 .side-item.on{background:var(--panel-2);color:var(--ink);font-weight:600}
 .side-item.on::before{content:"";position:absolute;left:0;top:22%;bottom:22%;width:3px;border-radius:2px;background:var(--amber)}
+/* 图标固定 1em 宽：折叠态箭头翻转（transform 对 inline 无效）+图标列对齐 */
+.side-item .ic{display:inline-block;width:1em;text-align:center;flex:none}
 .side-item .lb{overflow:hidden;text-overflow:ellipsis}
 .sidenav.collapsed .side-item{justify-content:center;padding:9px 0}
 .sidenav.collapsed .side-item .lb{display:none}
@@ -81,7 +83,7 @@ pre.mono{white-space:pre-wrap;word-break:break-all;margin:0;font-size:12px}
 .qbar.warn .qbar-fill{background:var(--amber)}
 .qbar.danger .qbar-fill{background:var(--red)}
 .qbar-pct{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:11px;color:var(--qbar-pct);letter-spacing:.02em}
-.qbar-pct.in-fill{color:#0e1116;font-weight:600}
+.qbar-pct.in-fill{color:var(--inset);font-weight:600}
 .qwin-l{font-size:11px;color:var(--ink-mute);margin-top:1px}
 .balout{font-size:12px;line-height:1.5}
 /* ── toast / modal（hub ui-bus 形态） ── */
@@ -109,21 +111,23 @@ pre.mono{white-space:pre-wrap;word-break:break-all;margin:0;font-size:12px}
 .gta-tabs{display:flex;gap:4px;margin-bottom:10px}
 .gta-tabs button{background:none;border:1px solid var(--hairline);color:var(--ink-mute);border-radius:6px;padding:4px 12px;font-weight:400;font-size:12.5px}
 .gta-tabs button.on{color:var(--amber);border-color:var(--amber-deep);background:color-mix(in srgb,var(--amber) 8%,transparent)}
-textarea.gta-body{width:100%;height:110px;background:#0e1116;border:1px solid var(--hairline);border-radius:6px;color:var(--ink);font:12px var(--mono);padding:10px;resize:vertical}
+textarea.gta-body{width:100%;height:110px;background:var(--inset);border:1px solid var(--hairline);border-radius:6px;color:var(--ink);font:12px var(--mono);padding:10px;resize:vertical}
 .gta-row{display:flex;gap:6px;align-items:center;margin-top:10px;flex-wrap:wrap}
-pre.gta-res{white-space:pre-wrap;word-break:break-all;font:12px var(--mono);background:#0e1116;border:1px solid var(--hairline);border-radius:6px;padding:10px;max-height:240px;overflow:auto;margin:10px 0 0}
+pre.gta-res{white-space:pre-wrap;word-break:break-all;font:12px var(--mono);background:var(--inset);border:1px solid var(--hairline);border-radius:6px;padding:10px;max-height:240px;overflow:auto;margin:10px 0 0}
 details.fold{margin:10px 0 0}
-details.fold>summary{cursor:pointer;user-select:none;font-size:12px;padding:6px 10px;background:#0e1116;border:1px solid var(--hairline);border-radius:6px}
+details.fold>summary{cursor:pointer;user-select:none;font-size:12px;padding:6px 10px;background:var(--inset);border:1px solid var(--hairline);border-radius:6px}
 details.fold[open]>summary{border-radius:6px 6px 0 0;border-bottom:none}
 details.fold>pre{margin:0;border-radius:0 0 6px 6px}
 .gta-meta{font-size:12px;margin-top:10px}
 .gta-hist{font-size:12px;color:var(--ink-mute);margin-top:8px}
+.log-bar{display:flex;gap:8px;margin:10px 0}
+.log-bar input{flex:1;margin:0;width:auto}
 /* ── 网关接入卡片 ── */
 .acc-row{display:flex;align-items:center;gap:8px;margin:6px 0}
 .acc-row .k{width:120px;flex:none;color:var(--ink-mute);font-size:12px}
-.acc-row .v{font-family:var(--mono);font-size:12.5px;background:#0e1116;border:1px solid var(--hairline);border-radius:6px;padding:5px 9px;flex:1;min-width:0;overflow:auto;white-space:nowrap}
+.acc-row .v{font-family:var(--mono);font-size:12.5px;background:var(--inset);border:1px solid var(--hairline);border-radius:6px;padding:5px 9px;flex:1;min-width:0;overflow:auto;white-space:nowrap}
 button.mini{padding:3px 10px;font-size:12px}
-pre.acc-pre{white-space:pre-wrap;word-break:break-all;font:12px var(--mono);background:#0e1116;border:1px solid var(--hairline);border-radius:6px;padding:10px;margin:10px 0 0;max-height:340px;overflow:auto}
+pre.acc-pre{white-space:pre-wrap;word-break:break-all;font:12px var(--mono);background:var(--inset);border:1px solid var(--hairline);border-radius:6px;padding:10px;margin:10px 0 0;max-height:340px;overflow:auto}
 /* ── 全局质感 ── */
 body{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 ::selection{background:rgba(232,163,61,.32)}
@@ -134,8 +138,9 @@ body{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 ::-webkit-scrollbar-corner{background:transparent}
 button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--amber-deep);outline-offset:1px}
 /* 表格：行 hover、数字列右对齐等宽、状态 pill */
-tr:not(.subrow):not(.side-item){transition:background .12s}
-tr:not(.subrow):hover{background:rgba(233,231,225,.028)}
+/* 行 hover 只限内容区卡片内表格——modal 结果表不可点，不给假可点暗示 */
+.card tr:not(.subrow){transition:background .12s}
+.card tr:not(.subrow):hover{background:rgba(233,231,225,.028)}
 th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
 .pill{display:inline-block;border-radius:99px;padding:0 8px;font-family:var(--mono);font-size:11.5px;font-weight:600;line-height:18px}
 .pill.ok{background:rgba(98,195,112,.13);color:var(--mint)}
@@ -153,10 +158,11 @@ th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
 /* 窄屏：收紧留白与字号，防止表格溢出破版 */
 @media (max-width:900px){
   .content{padding:10px 10px 40px;max-width:none}
-  .toolbar{margin:0 10px}
+  .toolbar{padding:10px 10px 8px}
   th,td{padding:5px 6px;font-size:12px}
   .kv{grid-template-columns:88px 1fr;font-size:12.5px}
   .login-card{width:calc(100vw - 40px)}
+  .card{overflow-x:auto} /* 窄屏宽表格横向滚动，不撑破版面 */
 }
 /* ── 登录 ── */
 #login{position:fixed;inset:0;background:var(--bg);display:none;align-items:center;justify-content:center}
@@ -188,7 +194,7 @@ th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
   <span class="tslot" id="refreshedAt"></span>
 </div>
 <div class="content">
-<div id="vMain"></div>
+<div id="vMain"><div class="card dim">加载中…</div></div>
 <div id="vPool" style="display:none"></div>
 <div id="vDiag" style="display:none"></div>
 <div id="vLog" style="display:none"></div>
@@ -210,8 +216,13 @@ th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
 const $=s=>document.querySelector(s);
 (function(){const o=localStorage.zc_apikey;if(o&&!localStorage.zc_admin_pass){localStorage.zc_admin_pass=o;localStorage.removeItem("zc_apikey")}})();
 function authHeaders(){const k=localStorage.zc_admin_pass;if(!k)return{};return{"Authorization":"Bearer "+k}}
-async function api(p,opt){const r=await fetch(p,Object.assign({headers:authHeaders()},opt||{}));try{return await r.json()}catch(e){return{error:String(e)}}}
-function esc(s){const d=document.createElement("div");d.textContent=s==null?"":String(s);return d.innerHTML}
+// api：先读文本再解析——非 JSON 错误体（反代 502 页/纯文本 500）也能带出 HTTP 状态与片段
+async function api(p,opt){const r=await fetch(p,Object.assign({headers:authHeaders()},opt||{}));
+  const t=await r.text().catch(()=>"");
+  try{const j=JSON.parse(t);if(!r.ok&&!j.error)j.error="HTTP "+r.status;return j}
+  catch(e){return{error:"HTTP "+r.status+(t?" — "+t.slice(0,200):"（无响应体）")}}}
+// esc：引号一并转义——title="…" 与 onclick 内联 JS 位的安全前提（label/err 来自配置与上游）
+function esc(s){const d=document.createElement("div");d.textContent=s==null?"":String(s);return d.innerHTML.replace(/"/g,"&quot;").replace(/'/g,"&#39;")}
 // toast 对齐 hub ui-bus：kind 着色 + 长 detail 收起可点展开 + 3.2/5.2s
 let tzSeq=0;
 function toast(msg,kind,detail){
@@ -330,7 +341,7 @@ async function loadAll(){
     const err=o.error,msg=typeof err==="object"?(err&&err.message||JSON.stringify(err)):String(err||"");
     if(/invalid api key|invalid admin password/i.test(msg)||!localStorage.zc_admin_pass){setDot("off","未登录");showLogin(localStorage.zc_admin_pass?"密码无效，请重新登录":"");return}
     setDot("run","网关异常");
-    $("#vMain").innerHTML='<div class="card bad">overview 加载失败'+(msg?" — "+esc(msg):"")+"</div>";return}
+    $("#vMain").innerHTML='<div class="card bad">overview 加载失败'+(msg?" — "+esc(msg):"")+' <button class="ghost mini" onclick="loadAll()">重试</button></div>';return}
   const c=o.credential;
   setDot(c.valid?"":"run",c.mode==="pool"?(c.valid?`运行中 · 池 ${c.accounts} 号`:"账号池为空"):c.valid?"运行中 · 单 token":"无凭据");
   if(h&&h.version)$("#sideVer").textContent="v"+h.version;
@@ -351,11 +362,12 @@ function renderMain(o,h){
   html+=`<div class="card"><h3>凭据</h3><div class="kv">
     <b>状态</b><span class="${c.valid?"ok":"bad"}">${c.valid?"有效":"无效"}${c.notice?" — "+esc(c.notice):""}</span>
     <b>模式</b><span>${esc(c.mode||"—")}${c.token_chars!=null?` <span class="dim mono">token ${c.token_chars} 字符</span>`:""}</span>
-    <b>本地鉴权</b><span>${o.local_auth?`<span class="badge on">管理员密码已开启</span> <input id="k" type="password" placeholder="管理员密码" value="${esc(localStorage.zc_admin_pass||"").replace(/"/g,"&quot;")}"> <button class="ghost mini" id="kToggle" onclick="toggleK()">显示</button> <button class="ghost" onclick="saveKey()">登录</button> <button class="ghost" onclick="logout()">退出登录</button>`:`<span class="badge ${o.credential&&o.credential.mode!=="none"?"warn":"off"}">${o.credential&&o.credential.admin_auth?"密码未设置（仅回环）":"未开启（仅回环）"}</span>`}</span>
+    <b>本地鉴权</b><span>${o.local_auth?`<span class="badge on">管理员密码已开启</span> <input id="k" type="password" placeholder="管理员密码" value="${esc(localStorage.zc_admin_pass||"")}"> <button class="ghost mini" id="kToggle" onclick="toggleK()">显示</button> <button class="ghost" onclick="saveKey()">登录</button> <button class="ghost" onclick="logout()">退出登录</button>`:`<span class="badge ${o.credential&&o.credential.mode!=="none"?"warn":"off"}">${o.credential&&o.credential.admin_auth?"密码未设置（仅回环）":"未开启（仅回环）"}</span>`}</span>
   </div></div>`;
   let poolHtml='<div class="card bad">当前不是账号池模式（单 token 或无凭据）</div>';
   if(c.mode==="pool"){
     const list=c.account_list||[];
+    window._poolList=list; // 行内按钮按索引取 label：label 带引号也不破 onclick
     const coolN=list.filter(a=>a.cooldown_s>0).length, expN=list.filter(a=>a.expired).length;
     const availN=list.length-coolN-expN;
     poolHtml=`<div class="card"><h3>账号池（${list.length} 号 · 可用 ${availN} · 冷却 ${coolN} · 过期 ${expN}）</h3><table>
@@ -367,15 +379,15 @@ function renderMain(o,h){
       <td>${a.cooldown_s?`<span class="warn">${fmtDur(a.cooldown_s)}</span>`:'<span class="ok">—</span>'}</td>
       <td class="dim mono">${a.token_chars} 字符</td>
       <td class="balout" id="bal_${esc(a.label)}">${balHtml(_balCache[a.label])}</td>
-      <td><button class="ghost" onclick="togglePlans(${i},'${esc(a.label)}',this)">▸投放</button>
-      <button class="ghost" onclick="doTouch(this,'${esc(a.label)}')">弹窗</button>
-      <button class="ghost" onclick="doBalance(this,'${esc(a.label)}')">刷新</button>
-      <button class="ghost" onclick="doClaimRow(this,'${esc(a.label)}')">领取</button></td></tr>`}).join("")}
+      <td><button class="ghost" onclick="togglePlans(${i},this)">▸投放</button>
+      <button class="ghost" onclick="doTouch(${i},this)">弹窗</button>
+      <button class="ghost" onclick="doBalance(${i},this)">刷新</button>
+      <button class="ghost" onclick="doClaimRow(this,window._poolList[${i}].label)">领取</button></td></tr>`}).join("")||'<tr><td colspan="7" class="dim">池内暂无账号</td></tr>'}
     </table></div>`;
     if(list.some(a=>!_balCache[a.label]))doBalanceAll();
   }
   html+=`<div class="card"><h3>模型</h3><table><tr><th>id</th><th>备注</th></tr>
-  ${(o.models||[]).map(m=>`<tr><td class="mono">${esc(m.id)}</td><td>${m.default?'<span class="badge on">default</span>':'<span class="dim">—</span>'}</td></tr>`).join("")}
+  ${(o.models||[]).map(m=>`<tr><td class="mono">${esc(m.id)}</td><td>${m.default?'<span class="badge on">default</span>':'<span class="dim">—</span>'}</td></tr>`).join("")||'<tr><td colspan="2" class="dim">无模型</td></tr>'}
   </table></div>`;
   $("#vMain").innerHTML=html;
   paintAcc();
@@ -410,13 +422,15 @@ function accCardHtml(){
     <button class="ghost mini" id="accKeyBtn" onclick="toggleAccKey()">显示</button>
     <button class="ghost mini" onclick="copyKey()">复制</button></div>
   <div class="acc-row"><span class="k">接入示例</span>
-    <button class="ghost mini" onclick="copyText(accExample())">复制示例</button>
+    <button class="ghost mini" onclick="copyText(accExample(false))">复制示例</button>
     <span class="dim" style="font-size:12px">OpenAI SDK 会在 base_url 后直接拼路径，所以带 /v1；Anthropic SDK 自己追加 /v1/messages，所以不带。</span></div>
   <pre class="acc-pre" id="accCode"></pre>
  </div>`}
-function accExample(){
+function accExample(masked){
  const base=_accBase(),ep=location.origin+_accEndpoint();
- const key=(window._accApiKey!==undefined&&window._accApiKey)?window._accApiKey:(localStorage.zc_admin_pass||"sk-your-gateway-key"),m=_accModel();
+ // 屏显走掩码（与上方 Key 行一致，页面不长期明文挂着 key）；复制时给真实值
+ const raw=(window._accApiKey!==undefined&&window._accApiKey)?window._accApiKey:(localStorage.zc_admin_pass||"sk-your-gateway-key");
+ const key=(masked&&raw)?_accKeyText():raw,m=_accModel();
  if(_accProto==="anthropic")return`# Python（anthropic SDK）
 import anthropic
 
@@ -476,7 +490,7 @@ function paintAcc(){
  document.getElementById("accEp").textContent=location.origin+_accEndpoint();
  document.getElementById("accKey").textContent=_accKeyText();
  document.getElementById("accKeyBtn").textContent=_accKeyOpen?"隐藏":"显示";
- document.getElementById("accCode").textContent=accExample();
+ document.getElementById("accCode").textContent=accExample(true);
 }
 function setAccProto(p){_accProto=p;paintAcc()}
 function toggleAccKey(){_accKeyOpen=!_accKeyOpen;paintAcc()}
@@ -502,7 +516,9 @@ function gtaDefaultBody(){
 function gtaPath(){return _gtaProto==="anthropic"?"/v1/messages":(_gtaProto==="responses"?"/v1/responses":"/v1/chat/completions")}
 function gtaSetProto(p){
   _gtaProto=p;
-  document.querySelectorAll(".gta-tabs button").forEach(b=>b.classList.toggle("on",b.dataset.p===p));
+  // 只切诊断页的 tab——.gta-tabs 也被概览接入卡复用，全局选择器会把
+  // 概览的高亮标错（tab 亮了协议却还是旧的）
+  document.querySelectorAll("#vDiag .gta-tabs button").forEach(b=>b.classList.toggle("on",b.dataset.p===p));
   $("#gtaBody").value=JSON.stringify(gtaDefaultBody(),null,2);
   $("#gtaCode").style.display="none";
 }
@@ -536,7 +552,9 @@ async function gtaSend(btn){
   const k=window._accApiKey||"";if(k)headers.Authorization="Bearer "+k;
   if(_gtaProto==="anthropic")headers["anthropic-version"]="2023-06-01";
   const ac=new AbortController();_gtaAbort=ac;
-  btn.disabled=true;const t0=Date.now();
+  btn.disabled=true;const old=btn.textContent;btn.textContent="发送中…";
+  $("#gtaRes").innerHTML='<div class="dim">请求中…（真实走全链路，等待上游响应）</div>';
+  const t0=Date.now();
   try{
     const r=await fetch(gtaPath(),{method:"POST",headers,body:JSON.stringify(obj),signal:ac.signal});
     const txt=await r.text();
@@ -544,11 +562,11 @@ async function gtaSend(btn){
   }catch(e){
     const ab=e&&e.name==="AbortError";
     gtaResult({ok:false,status:0,ms:Date.now()-t0,text:ab?"请求已中止":"请求失败: "+e.message,proto:_gtaProto,aborted:ab,t:new Date().toTimeString().slice(0,8)});
-  }finally{btn.disabled=false;_gtaAbort=null}
+  }finally{btn.disabled=false;btn.textContent=old;_gtaAbort=null}
 }
 function gtaAbort(){_gtaAbort&&_gtaAbort.abort()}
 // 请求日志：内存环最近 N 条（新的在前），与 request.log 同源；行可点开看全字段
-let _logAll=false,_logOpen=new Set();
+let _logAll=false,_logOpen=new Set(),_logFilter="",_logShell=false,_logErr="";
 function logSubRow(i){
   const l=(window._logs||[])[i];if(!l)return null;
   const kv=(k,v,cls)=>v==null||v===""?"":`<b>${k}</b><span class="${cls||""}">${esc(v)}</span>`;
@@ -571,20 +589,23 @@ function logSubRow(i){
   return tr;
 }
 function toggleLogRow(i){
+  const l=(window._logs||[])[i];if(!l)return;
+  const k=l.req_id||("i"+i); // 按 req_id 记忆展开态：按索引记会随新日志插入错位
   const ex=document.getElementById("lsub_"+i);
-  if(ex){ex.remove();_logOpen.delete(i);return}
+  if(ex){ex.remove();_logOpen.delete(k);return}
   const tr=logSubRow(i);if(!tr)return;
-  _logOpen.add(i);
+  _logOpen.add(k);
   document.getElementById("lrow_"+i).after(tr);
 }
-async function loadLogs(){
-  let logs=[],err="";
-  try{const r=await api("/admin/api/logs?n=200");logs=r.logs||[]}catch(e){err=String(e)}
-  window._logs=logs;
-  _logOpen=new Set([..._logOpen].filter(i=>i<logs.length));
-  const shown=_logAll?logs:logs.slice(0,20);
+function renderLogs(){
+  if(!_logShell)return;
+  const logs=window._logs||[];
+  const f=_logFilter.trim().toLowerCase();
+  const hits=logs.map((l,i)=>[l,i]).filter(([l])=>!f||((l.ts||"")+" "+(l.model||"")+" "+(l.account||"")+" "+(l.status||"")+" "+(l.finish||"")+" "+(l.err||"")).toLowerCase().includes(f));
+  const total=hits.length;
+  const shown=hits.slice(0,_logAll?total:20);
   const row=(l,i)=>`<tr id="lrow_${i}" onclick="toggleLogRow(${i})" style="cursor:pointer" title="点击展开/收起详情">
-    <td class="mono"><span class="dim">${_logOpen.has(i)?"▾":"▸"}</span> ${esc((l.ts||"").replace("T"," ").slice(0,19))}</td>
+    <td class="mono"><span class="dim">${_logOpen.has(l.req_id||("i"+i))?"▾":"▸"}</span> ${esc((l.ts||"").replace("T"," ").slice(0,19))}</td>
     <td>${esc(l.proto||"")}${l.stream?' <span class="dim">SSE</span>':""}</td>
     <td class="mono">${esc(l.model||"")}</td>
     <td>${esc(l.account||"—")}</td>
@@ -596,16 +617,30 @@ async function loadLogs(){
     <td class="mono num">${l.cost?("$"+l.cost.toFixed(6)):"—"}</td>
     <td class="mono${l.err?" bad":""}" title="${esc(l.err||"")}">${esc((l.err||"").slice(0,40))}</td>
   </tr>`;
-  $("#vLog").innerHTML=`<div class="card"><h3>请求日志 <span class="dim">（内存环最近 200 条 · 点击行展开完整字段 · 全量落盘 request.log）</span></h3>
-    ${err?`<div class="warn">${esc(err)}</div>`:""}
+  $("#logTableWrap").innerHTML=`${_logErr?`<div class="warn">${esc(_logErr)}</div>`:""}
     <table><tr><th>时间</th><th>协议</th><th>模型</th><th>账号</th><th>状态</th><th>finish</th><th class="num">TTFT</th><th class="num">总耗时</th><th class="num">in/out/cache</th><th class="num">成本</th><th>错误</th></tr>
-    ${shown.length?shown.map(row).join(""):'<tr><td colspan="11" class="dim">暂无请求</td></tr>'}</table>
-    ${logs.length>20?`<div style="padding:8px 10px"><button class="ghost mini" onclick="_logAll=!_logAll;loadLogs()">${_logAll?"收起，只显示最近 20 条":"展开全部 "+logs.length+" 条"}</button></div>`:""}</div>`;
-  _logOpen.forEach(i=>{const tr=logSubRow(i);if(tr)document.getElementById("lrow_"+i).after(tr)});
+    ${shown.length?shown.map(([l,i])=>row(l,i)).join(""):`<tr><td colspan="11" class="dim">${f?"无匹配（试试放宽关键词）":"暂无请求"}</td></tr>`}</table>
+    ${total>20?`<div style="padding:8px 10px"><button class="ghost mini" onclick="_logAll=!_logAll;renderLogs()">${_logAll?"收起，只显示最近 20 条":"展开全部 "+total+" 条"}</button></div>`:""}`;
+  shown.forEach(([l,i])=>{if(_logOpen.has(l.req_id||("i"+i))){const tr=logSubRow(i);if(tr)document.getElementById("lrow_"+i).after(tr)}});
+}
+async function loadLogs(){
+  let logs=[],err="";
+  try{const r=await api("/admin/api/logs?n=200");logs=r.logs||[];if(r.error)err=r.error}catch(e){err=String(e)}
+  window._logs=logs;
+  {const alive=new Set(logs.map(l=>l.req_id));_logOpen=new Set([..._logOpen].filter(k=>alive.has(k)))}
+  _logErr=err;
+  if(!_logShell){ // 外壳只建一次：过滤框不随表格重绘，输入不丢焦点
+    _logShell=true;
+    $("#vLog").innerHTML=`<div class="card"><h3>请求日志 <span class="dim">（内存环最近 200 条 · 点击行展开完整字段 · 全量落盘 request.log）</span></h3>
+      <div class="log-bar"><input id="logFilter" placeholder="过滤：时间 / 模型 / 账号 / 状态 / 错误…" value="${esc(_logFilter)}" oninput="_logFilter=this.value;renderLogs()"><button class="ghost mini" onclick="_logFilter='';document.getElementById('logFilter').value='';renderLogs()">清除</button></div>
+      <div id="logTableWrap"></div></div>`;
+  }
+  renderLogs();
 }
 async function loadDiag(){
-  const hres=await fetch("/health",{headers:authHeaders()});
-  const h=await hres.json().catch(()=>null);
+  let h=null,hStatus=0,hErr="";
+  try{const hres=await fetch("/health",{headers:authHeaders()});hStatus=hres.status;h=await hres.json().catch(()=>null)}
+  catch(e){hErr=String(e)}
   $("#vDiag").innerHTML=`
   <div class="card"><h3>网关自测 <span class="dim">（真实走 鉴权→账号池→上游 全链路，消耗少量额度；使用窗口=北京 23:00–09:00，窗口外上游可能回 200+空 body，属额度限制非故障）</span></h3>
     <div class="gta-tabs">
@@ -618,13 +653,14 @@ async function loadDiag(){
       <button onclick="gtaSend(this)">发送测试</button>
       <button class="ghost" onclick="gtaAbort()">中止</button>
       <button class="ghost" onclick="gtaToggleCode()">curl 预览</button>
+      <button class="ghost" onclick="copyText(gtaCurl())">复制 curl</button>
     </div>
     <pre id="gtaCode" class="gta-res" style="display:none"></pre>
     <div id="gtaRes"></div>
     <div id="gtaHist" class="gta-hist"></div>
   </div>
-  <div class="card"><h3>健康检查 <span class="dim">GET /health → ${hres.status}</span></h3>
-  <details class="fold"><summary>展开 /health 原始 JSON</summary><pre class="mono">${esc(JSON.stringify(h,null,2))}</pre></details></div>
+  <div class="card"><h3>健康检查 <span class="dim">GET /health → ${hErr?"失败 · "+esc(hErr):hStatus}</span></h3>
+  <details class="fold"><summary>展开 /health 原始 JSON</summary><pre class="mono">${esc(hErr||JSON.stringify(h,null,2))}</pre></details></div>
   <div class="card"><h3>运维提示</h3><div class="kv">
     <b>token 来源</b><span>env <span class="mono">ZCODE_TOKEN</span> &gt; 本目录 <span class="mono">token.json</span> &gt; <span class="mono">~/.zcode/v2/config.json</span> 的 start-plan apiKey</span>
     <b>401 处理</b><span>运行 <span class="mono">./zcode2api-go.exe login</span> 重新授权；CLI/GUI 重登后网关会自动重读，无需重启</span>
@@ -654,25 +690,34 @@ function balHtml(x){
 async function doBalanceAll(){
   if(_balFetching)return;_balFetching=true;
   document.querySelectorAll(".balout[id^=bal_]").forEach(el=>{if(!el.innerHTML)el.innerHTML='<span class="dim">加载中…</span>'});
-  const r=await api("/admin/api/balance");
-  for(const x of r.results||[]){
-    _balCache[x.account]=x;
-    const el=document.getElementById("bal_"+x.account);
-    if(el)el.innerHTML=balHtml(x);
-  }
-  _balFetching=false;
+  try{
+    const r=await api("/admin/api/balance");
+    const res=r.results||[];
+    if(!res.length){ // 失败也要收尾：占位格子不能永远停在“加载中”
+      document.querySelectorAll(".balout[id^=bal_]").forEach(el=>{if(el.innerHTML.includes("加载中"))el.innerHTML='<span class="warn">查询失败</span>'});
+      toast(r.error||"余额查询无结果","err");return}
+    for(const x of res){
+      _balCache[x.account]=x;
+      const el=document.getElementById("bal_"+x.account);
+      if(el)el.innerHTML=balHtml(x);
+    }
+  }finally{_balFetching=false}
 }
-async function doBalance(btn,label){
-  btn.disabled=true;
+async function doBalance(i,btn){
+  const label=(window._poolList||[])[i]&&window._poolList[i].label;
+  if(label==null)return;
+  btn.disabled=true;const old=btn.textContent;btn.textContent="刷新中…";
   const r=await api("/admin/api/balance?account="+encodeURIComponent(label));
-  btn.disabled=false;
+  btn.disabled=false;btn.textContent=old;
   const mine=(r.results||[])[0];
   if(mine)_balCache[label]=mine;
   const el=document.getElementById("bal_"+label);
   if(el)el.innerHTML=mine?balHtml(mine):'<span class="warn">查询失败</span>';
 }
 // 行内展开投放清单：数据源与弹窗一致（/admin/api/touch?account=），再点收起
-async function togglePlans(i,label,btn){
+async function togglePlans(i,btn){
+  const label=(window._poolList||[])[i]&&window._poolList[i].label;
+  if(label==null)return;
   const ex=document.getElementById("sub_"+i);
   if(ex){ex.remove();btn.textContent="▸投放";return}
   btn.disabled=true;btn.textContent="载入…";
@@ -684,7 +729,7 @@ async function togglePlans(i,label,btn){
   else if(x.err)cell=`<span class="bad">${esc(x.err)}</span>`;
   else{
     const ds=(x.deliveries||[]).filter(d=>(d.PlanIDs||[]).length);
-    if(ds.length)cell=`<table><tr><th>plan</th><th>位置</th><th>campaign</th><th>操作</th></tr>${ds.map(d=>`<tr><td class="mono ok">${esc(d.PlanIDs.join(", "))}</td><td class="dim">${esc(d.ResourcePosition||"—")}</td><td class="dim mono">${esc((d.CampaignID||"—").slice(0,14))}</td><td><button class="ghost mini" onclick="doClaimRow(this,'${esc(label)}')">领取</button></td></tr>`).join("")}</table>`;
+    if(ds.length)cell=`<table><tr><th>plan</th><th>位置</th><th>campaign</th><th>操作</th></tr>${ds.map(d=>`<tr><td class="mono ok">${esc(d.PlanIDs.join(", "))}</td><td class="dim">${esc(d.ResourcePosition||"—")}</td><td class="dim mono">${esc((d.CampaignID||"—").slice(0,14))}</td><td><button class="ghost mini" onclick="doClaimRow(this,window._poolList[${i}].label)">领取</button></td></tr>`).join("")}</table>`;
     else cell=(x.deliveries||[]).length?`<span class="dim">有投放壳但无可领 plan（位置: ${esc((x.deliveries||[]).map(d=>d.ResourcePosition).join(", "))}）</span>`:'<span class="dim">无投放（touch.query 清单为空，服务端名单动态进出）</span>';
   }
   const tr=document.createElement("tr");tr.id="sub_"+i;tr.className="subrow";
@@ -693,10 +738,13 @@ async function togglePlans(i,label,btn){
   if(row)row.after(tr);
 }
 // touch 投放是"能不能领"的唯一数据源（preview 通道已删，zcode-hub 同口径）
-async function doTouch(btn,label){
+async function doTouch(i,btn){
+  const label=(window._poolList||[])[i]&&window._poolList[i].label;
+  if(label==null)return;
   btn.disabled=true;
   const r=await api("/admin/api/touch?account="+encodeURIComponent(label));
   btn.disabled=false;
+  if(r.error){showModal({title:label+" — touch 失败",kind:"err",body:esc(r.error)});return}
   const x=(r.results||[])[0];
   if(!x){showModal({title:"投放探测失败",kind:"err",body:"接口无结果返回"});return}
   if(x.err){showModal({title:label+" — touch 失败",kind:"err",body:esc(x.err)});return}
@@ -716,6 +764,7 @@ async function doTouchAll(btn){
   btn.disabled=true;
   const r=await api("/admin/api/touch");
   btn.disabled=false;
+  if(r.error){showModal({title:"投放探测失败",kind:"err",body:esc(r.error)});return}
   const res=r.results||[];
   const hit=res.filter(x=>!x.err&&(x.deliveries||[]).some(d=>(d.PlanIDs||[]).length));
   showModal({title:`投放探测：${hit.length} / ${res.length} 号有投放`,kind:hit.length?"ok":"warn",body:`<table><tr><th>账号</th><th>投放</th></tr>${res.map(x=>{
