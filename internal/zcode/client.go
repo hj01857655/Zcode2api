@@ -182,10 +182,13 @@ func (c *Client) MessagesWithAccount(body []byte, sticky string) (*http.Response
 			_ = c.Pool.Settle(acc.Label, false) // 熔断双闸记账（窗口/连败）
 			if d > 0 {
 				c.Pool.Cooldown(acc.Label, d)
-				// IP 级风控（405/3012）与用户级并发上限（3008/3009/3010）都设
-				// 全局退避闸——3008 是 user 级限制，换号同样撞，排队只烧重试轮次
+				// IP 级风控（405/3012）与 IP 级并发上限（3009/3010）设全局退避闸。
+				// 3008 不进全局闸：它是 user 级并发上限（msg="user concurrency
+				// limit exceeded"），每个账号是独立 user，单号冷却 60s 后换号即可
+				// ——设全局闸等于让一个号的并发限制拖累全池 fail-fast
+				// （2026-11-07 服务器日志实锤：一次 3008 → 60s 内 13 连 502）
 				if ue.Status == http.StatusMethodNotAllowed || strings.Contains(ue.Body, "3012") ||
-					strings.Contains(ue.Body, "3008") || strings.Contains(ue.Body, "3009") || strings.Contains(ue.Body, "3010") {
+					strings.Contains(ue.Body, "3009") || strings.Contains(ue.Body, "3010") {
 					c.Pool.SetGlobalBackoff(d)
 				}
 				continue // 换下一个账号

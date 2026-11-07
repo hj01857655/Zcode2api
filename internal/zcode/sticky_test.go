@@ -144,3 +144,57 @@ func TestMessagesWithAccountRotatesWithoutSticky(t *testing.T) {
 		t.Fatalf("空 sticky 不得写绑定表, sticky=%v", pool.sticky)
 	}
 }
+
+func TestGlobalBackoffScoping(t *testing.T) {
+	// 3008 = user 级并发上限：单号冷却 + 换号成功，不设全局闸；
+	// 3012 = IP 级风控：必须设全局闸（否则继续撞风控白烧重试轮次）。
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tok := r.Header.Get("Authorization")
+		if tok == "Bearer tok-a" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"code":3008,"msg":"user concurrency limit exceeded"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer up.Close()
+
+	pool := LoadPool(filepath.Join(t.TempDir(), "none.json"))
+	pool.Upsert(Account{Label: "a", Token: "tok-a"})
+	pool.Upsert(Account{Label: "b", Token: "tok-b"})
+	c := New(up.URL, "")
+	c.Pool = pool
+
+	resp, label, err := c.MessagesWithAccount([]byte(`{}`), "")
+	if err != nil {
+		t.Fatalf("3008 后应换号成功: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if label != "b" {
+		t.Fatalf("应换到 b 号, got %s", label)
+	}
+	if d := pool.GlobalBackoffRemaining(); d > 0 {
+		t.Fatalf("3008 不得设全局退避闸, remaining=%v", d)
+	}
+	if until, cool := pool.cool["a"]; !cool || until.Before(time.Now()) {
+		t.Fatal("3008 的号应进入单号冷却")
+	}
+
+	// 对照：3012 仍设全局闸
+	pool2 := LoadPool(filepath.Join(t.TempDir(), "none.json"))
+	pool2.Upsert(Account{Label: "a", Token: "tok-a"})
+	up2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		_, _ = w.Write([]byte(`{"code":3012}`))
+	}))
+	defer up2.Close()
+	c2 := New(up2.URL, "tok-a")
+	c2.Pool = pool2
+	_, _, _ = c2.MessagesWithAccount([]byte(`{}`), "")
+	if d := pool2.GlobalBackoffRemaining(); d <= 0 {
+		t.Fatal("3012 应设全局退避闸")
+	}
+}
