@@ -20,13 +20,13 @@ body{background:var(--bg);color:var(--ink);font:14px/1.6 var(--body);display:fle
 button{background:var(--amber);border:1px solid var(--amber);border-radius:6px;color:var(--amber-ink);padding:6px 14px;cursor:pointer;font-size:13.5px;font-weight:600;font-family:var(--body)}
 button:hover:not(:disabled){background:var(--amber-hover)}
 button.ghost{background:var(--panel);border:1px solid var(--hairline);color:var(--ink-dim);font-weight:400;border-radius:7px;padding:7px 13px}
-button.ghost:hover:not(:disabled){color:var(--ink);border-color:rgba(233,231,225,.14)}
+button.ghost:hover:not(:disabled){color:var(--ink);border-color:color-mix(in srgb,var(--ink) 14%,transparent)}
 button:disabled{opacity:.5;cursor:wait}
 input{background:#0e1116;border:1px solid var(--hairline);border-radius:6px;color:var(--ink);padding:7px 10px;font-size:13px;width:180px;font-family:var(--body)}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--hairline-soft)}
 th{color:var(--ink-mute);font-weight:400;font-size:12px}
-tr.hl{background:rgba(224,82,82,.06)}
+tr.hl{background:color-mix(in srgb,var(--red) 6%,transparent)}
 tr.subrow td{background:var(--bg-2);padding:8px 12px}
 tr.subrow table{width:auto}
 tr.subrow th,tr.subrow td{border-bottom:1px solid var(--hairline-soft)}
@@ -34,7 +34,7 @@ tr.subrow th,tr.subrow td{border-bottom:1px solid var(--hairline-soft)}
 .mono{font-family:var(--mono);font-size:12px}
 pre.mono{white-space:pre-wrap;word-break:break-all;margin:0;font-size:12px}
 .badge{display:inline-block;border-radius:99px;padding:1px 9px;font-size:11px;font-weight:600}
-.badge.on{background:rgba(98,195,112,.12);color:var(--mint)}.badge.off{background:rgba(224,82,82,.12);color:var(--red)}
+.badge.on{background:color-mix(in srgb,var(--mint) 12%,transparent);color:var(--mint)}.badge.off{background:color-mix(in srgb,var(--red) 12%,transparent);color:var(--red)}
 /* ── 侧栏导航（zcode-hub 形态，支持折叠成图标窄条） ── */
 .sidenav{width:208px;flex:none;display:flex;flex-direction:column;gap:4px;padding:16px 10px 12px;border-right:1px solid var(--hairline-soft);background:var(--bg-2);transition:width .18s ease}
 .sidenav.collapsed{width:54px;padding:16px 6px 12px}
@@ -46,7 +46,7 @@ pre.mono{white-space:pre-wrap;word-break:break-all;margin:0;font-size:12px}
 .sidenav.collapsed #navFold .ic{transform:rotate(180deg)}
 .side-item{position:relative;display:flex;align-items:center;gap:9px;text-align:left;padding:9px 12px;border-radius:8px;color:var(--ink-dim);white-space:nowrap;cursor:pointer;background:none;border:none;font:14px var(--body)}
 .side-item:hover{background:var(--panel);color:var(--ink)}
-.side-item.on{background:var(--panel-2);color:var(--amber)}
+.side-item.on{background:var(--panel-2);color:var(--ink);font-weight:600}
 .side-item.on::before{content:"";position:absolute;left:0;top:22%;bottom:22%;width:3px;border-radius:2px;background:var(--amber)}
 .side-item .lb{overflow:hidden;text-overflow:ellipsis}
 .sidenav.collapsed .side-item{justify-content:center;padding:9px 0}
@@ -89,9 +89,9 @@ pre.mono{white-space:pre-wrap;word-break:break-all;margin:0;font-size:12px}
 .toast{background:var(--panel-2);border:1px solid var(--hairline);border-radius:7px;padding:10px 16px;font-size:14px;max-width:min(72vw,480px);display:flex;gap:10px;animation:tin .18s}
 .toast .t-ic{flex:none;color:var(--ink-mute)}
 .toast.ok .t-ic{color:var(--mint)}.toast.err .t-ic{color:var(--red)}.toast.warn .t-ic{color:var(--amber)}
-.toast.ok{border-color:var(--mint-dim)}.toast.err{border-color:var(--red-dim);color:var(--err-soft)}.toast.warn{border-color:rgba(232,163,61,.45)}
+.toast.ok{border-color:var(--mint-dim)}.toast.err{border-color:var(--red-dim);color:var(--err-soft)}.toast.warn{border-color:color-mix(in srgb,var(--amber) 45%,transparent)}
 .toast .detail{display:block;color:var(--ink-mute);font-size:13px;margin-top:2px;white-space:pre-wrap;word-break:break-all}
-.toast.err .detail{color:var(--err-soft,#c98f8f)}
+.toast.err .detail{color:var(--err-soft)}
 .toast.expandable{cursor:pointer}
 .toast.expandable.open{max-width:min(88vw,720px)}
 @keyframes tin{from{opacity:0;transform:translateY(6px)}}
@@ -108,7 +108,7 @@ pre.mono{white-space:pre-wrap;word-break:break-all;margin:0;font-size:12px}
 /* ── 网关自测（hub gateway-test 形态） ── */
 .gta-tabs{display:flex;gap:4px;margin-bottom:10px}
 .gta-tabs button{background:none;border:1px solid var(--hairline);color:var(--ink-mute);border-radius:6px;padding:4px 12px;font-weight:400;font-size:12.5px}
-.gta-tabs button.on{color:var(--amber);border-color:var(--amber-deep);background:rgba(232,163,61,.08)}
+.gta-tabs button.on{color:var(--amber);border-color:var(--amber-deep);background:color-mix(in srgb,var(--amber) 8%,transparent)}
 textarea.gta-body{width:100%;height:110px;background:#0e1116;border:1px solid var(--hairline);border-radius:6px;color:var(--ink);font:12px var(--mono);padding:10px;resize:vertical}
 .gta-row{display:flex;gap:6px;align-items:center;margin-top:10px;flex-wrap:wrap}
 pre.gta-res{white-space:pre-wrap;word-break:break-all;font:12px var(--mono);background:#0e1116;border:1px solid var(--hairline);border-radius:6px;padding:10px;max-height:240px;overflow:auto;margin:10px 0 0}
