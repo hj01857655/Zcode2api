@@ -10,12 +10,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"zcode2api/internal/config"
@@ -111,16 +114,40 @@ func serve() {
 		}()
 	}
 
-	addr := "127.0.0.1:" + strconv.Itoa(cfg.Port)
+	addr := os.Getenv("LISTEN_ADDR")
+	if addr == "" {
+		addr = "127.0.0.1:" + strconv.Itoa(cfg.Port)
+	}
+	// 非 loopback 监听（Docker/对外部署 LISTEN_ADDR=0.0.0.0:3010）强制凭据：
+	// API_KEY 与 ADMIN_PASSWORD 全空 = 面板与网关全部裸奔，直接拒启
+	if !strings.HasPrefix(addr, "127.") && !strings.HasPrefix(addr, "localhost") && !strings.HasPrefix(addr, "[::1]") &&
+		cfg.APIKey == "" && cfg.AdminPassword == "" {
+		log.Fatalf("监听 %s 为非 loopback 地址，必须设置 API_KEY 或 ADMIN_PASSWORD", addr)
+	}
 	log.Printf("ZCode2api-go 监听 http://%s （upstream=%s）", addr, cfg.Upstream)
 	// ReadHeaderTimeout 防 slowloris（慢速发头占连接）：5s 对本地/内网足够宽裕；
-	// 不设 ReadTimeout/WriteTimeout——SSE 流式回答持续几分钟是正常形态
+	// 不设 ReadTimeout/WriteTimeout——SSE 流式回答持续几分钟是正常形态；
+	// IdleTimeout 回收空闲连接，长驻进程防积累（SSE 活跃连接不受影响）。
+	// 优雅退出：Ctrl+C/SIGTERM → Shutdown 等 in-flight 请求（10s 兜底）→ 日志句柄收尾。
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	httpSrv := &http.Server{
 		Addr:              addr,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
-	log.Fatal(httpSrv.ListenAndServe())
+	go func() {
+		<-ctx.Done()
+		stop() // 恢复默认信号行为：第二次 Ctrl+C 强杀
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = httpSrv.Shutdown(shutdownCtx)
+	}()
+	if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatal(err)
+	}
+	srv.Close()
 }
 
 // claimSlots 每天尝试领取的时刻（距 00:00 的分钟数，北京时间 zcode.CST8）。

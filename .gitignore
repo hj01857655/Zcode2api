@@ -12,8 +12,11 @@ __pycache__/
 # 凭据（token/凭据文件，不入库）
 token.json
 credentials.json
+config.json
+zcode_devices.json
 .env
 .env.*
+!.env.example
 
 tools/node_modules/
 exp/

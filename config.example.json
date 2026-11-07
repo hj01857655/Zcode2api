@@ -1,0 +1,11 @@
+{
+  "port": 3010,
+  "upstream": "https://zcode.z.ai/api/v1/zcode-plan/anthropic/v1/messages",
+  "client_version": "3.16.3",
+  "default_model": "GLM-5.3-Flash",
+  "models": ["GLM-5.3-Flash", "GLM-5.3"],
+  "admin_password": "",
+  "request_log_rotate_mb": 64,
+  "total_timeout_secs": 600,
+  "keepalive_secs": 15
+}

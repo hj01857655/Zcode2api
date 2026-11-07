@@ -122,6 +122,9 @@ func (s *Server) upstreamMessages(body []byte, sticky string) (*http.Response, s
 	return resp, account, err
 }
 
+// Close 收尾内部资源（请求日志写句柄）；进程优雅退出时调用。
+func (s *Server) Close() { s.Log.Close() }
+
 // Handler 返回根 mux。
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
